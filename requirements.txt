@@ -6,4 +6,5 @@ slowapi
 streamlit
 requests
 pandas
-Plotly
+plotly
+google-generativeai

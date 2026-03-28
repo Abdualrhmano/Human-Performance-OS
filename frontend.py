@@ -8,7 +8,7 @@ from datetime import datetime
 
 # 1. إعدادات الصفحة الفائقة
 st.set_page_config(
-    page_title="LUNA Sovereign OS | Performance Core",
+    page_title="Human Performance OS v2.0| Performance Core",
     page_icon="🧠",
     layout="wide"
 )

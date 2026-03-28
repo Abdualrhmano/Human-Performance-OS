@@ -32,7 +32,7 @@ logger = logging.getLogger(__name__)
 
 # ==================== ELITE CONFIGURATION ====================
 class EliteConfig:
-    GEMINI_API_KEY = os.getenv(b"1Xt5YfM4ZNuFdwp3OfVkwkhhQLagWKtt", "AIzaSyCG7WK6t9Fn73Oq2ajJ337KRUrW57X82Ao")
+    GEMINI_API_KEY = os.getenv("1Xt5YfM4ZNuFdwp3OfVkwkhhQLagWKtt", "AIzaSyCG7WK6t9Fn73Oq2ajJ337KRUrW57X82Ao")
     DB_PATH = 'elite_performance_v4.db'
     SECRET_KEY = os.getenv("SECRET_KEY", secrets.token_hex(32))
     API_VERSION = "4.0.0"

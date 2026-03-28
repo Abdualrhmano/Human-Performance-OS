@@ -292,9 +292,42 @@ with st.sidebar:
             focus = st.slider("🎯 Focus Duration", 0.0, 10.0, 4.0, 0.5)
             stress = st.slider("😰 Stress Level", 0.0, 10.0, 3.0, 0.5)
         
-        if st.button("🚀 EXECUTE ELITE ANALYSIS", use_container_width=True):
-            # Simulate API call with elite response
-            st.rerun()
+                if st.button("🚀 EXECUTE ELITE ANALYSIS", use_container_width=True):
+            with st.spinner('🧬 Synchronizing with Neural Core...'):
+                # 1. تجهيز البيانات من السلايدرز (تأكد من مطابقة أسماء المتغيرات لديك)
+                payload = {
+                    "sleep_hours": float(sleep), 
+                    "focus_hours": float(focus),
+                    "energy_level": int(energy),
+                    "stress_level": float(stress),
+                    "heart_rate": 75,   # قيم افتراضية حتى يتم ربط الساعة
+                    "steps": 8000,
+                    "calories": 2500.0
+                }
+                
+                # 2. إرسال البيانات للباك-إند باستخدام الـ Token
+                headers = {"Authorization": f"Bearer {api_key}"}
+                
+                try:
+                    # تأكد أن السيرفر (main.py) يعمل على بورت 8000
+                    response = requests.post(
+                        f"{API_BASE_URL}/evaluate", 
+                        json=payload, 
+                        headers=headers,
+                        timeout=10
+                    )
+                    
+                    if response.status_code == 200:
+                        st.success("✅ Neural Protocol Executed | Data Matrix Updated")
+                        time.sleep(1) # تعطي وقت للمستخدم لرؤية النجاح
+                        st.rerun()    # الآن نقوم بإعادة التحميل لتحديث الرسوم البيانية
+                    else:
+                        error_detail = response.json().get('detail', 'Unknown Error')
+                        st.error(f"❌ Access Denied: {error_detail}")
+                
+                except Exception as e:
+                    st.error(f"📡 Connection Refused: Ensure Backend (main.py) is running.")
+
 
 # ==================== LIVE ELITE DATA ====================
 elite_df = EliteHealthEngine.get_elite_data()

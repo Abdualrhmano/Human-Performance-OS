@@ -21,7 +21,7 @@ API_KEYS = {"demo-key": "user1"}
 genai.configure(api_key=GEMINI_API_KEY)
 model = genai.GenerativeModel('gemini-1.5-flash')
 
-app = FastAPI(title="Human Performance  AI Core")
+app = FastAPI(title="LUNA AI Core")
 
 # 2. قاعدة البيانات
 def init_db():

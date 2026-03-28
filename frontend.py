@@ -282,6 +282,25 @@ st.divider()
 with st.sidebar:
     st.markdown("## 🧠 ELITE CONTROL MATRIX")
     
+    # تعريف المتغير هنا يحل مشكلة NameError تماماً
+    api_key_input = st.text_input(
+        "🔑 Neural Access Key", 
+        type="password", 
+        value="luna-v4-elite",
+        help="أدخل مفتاح الأمان للاتصال بـ Neural Core v4.0"
+    )
+    
+    st.divider()
+    
+    # إدخالات البيانات (Sliders)
+    st.markdown("### 🔬 BIOMETRIC INPUT")
+    sleep_quality = st.slider("🌙 Sleep Quality", 0.0, 12.0, 7.0)
+    focus_duration = st.slider("🎯 Focus Duration", 0.0, 12.0, 4.0)
+    energy_level = st.slider("⚡ Energy Level", 1, 10, 5)
+    stress_level = st.slider("😰 Stress Level", 0.0, 10.0, 2.0)
+    
+    st.divider()
+    
     with st.container(border=True):
         st.markdown("### 🔬 BIOMETRIC INPUT")
         col1, col2 = st.columns(2)
@@ -292,8 +311,8 @@ with st.sidebar:
             focus = st.slider("🎯 Focus Duration", 0.0, 10.0, 4.0, 0.5)
             stress = st.slider("😰 Stress Level", 0.0, 10.0, 3.0, 0.5)
         
-                if st.button("🚀 EXECUTE ELITE ANALYSIS", use_container_width=True):
-            with st.spinner('🧬 Synchronizing with Neural Core...'):
+if st.button("🚀 EXECUTE ELITE ANALYSIS", use_container_width=True):
+     with st.spinner('🧬 Synchronizing with Neural Core...'):
                 # 1. تجهيز البيانات من السلايدرز (تأكد من مطابقة أسماء المتغيرات لديك)
                 payload = {
                     "sleep_hours": float(sleep), 

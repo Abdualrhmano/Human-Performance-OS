@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 import uvicorn
 import sqlite3
@@ -7,30 +7,29 @@ from datetime import datetime
 import os
 import base64
 import json
-import time
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 # ==================== CONFIGURATION ====================
-# استبدل هذا المفتاح بمفتاحك الذي حصلت عليه من Google AI Studio
-GEMINI_API_KEY = "AIzaSyCG7WK6t9Fn73Oq2ajJ337KRUrW57X82Ao" 
-SECRET_KEY = b"1Xt5YfM4ZNuFdwp3OfVkwkhhQLagWKtt" # مفتاح التشفير (يجب أن يكون 32 حرف)
-DB_NAME = 'luna_performance_v2.db'
+# ضع مفتاح Gemini API الخاص بك هنا
+GEMINI_API_KEY = "YOUR_GEMINI_API_KEY_HERE" 
+SECRET_KEY = b"1Xt5YfM4ZNuFdwp3OfVkwkhhQLagWKtt" 
+DB_NAME = 'human_performance_v2.db'
 
-# تهيئة ذكاء LUNA الاصطناعي
+# تهيئة الذكاء الاصطناعي للنظام الصحي
 try:
     genai.configure(api_key=GEMINI_API_KEY)
     model = genai.GenerativeModel('gemini-1.5-flash')
 except Exception as e:
-    print(f"AI Core Warning: {e}")
+    print(f"AI Engine Warning: {e}")
 
-app = FastAPI(title="Human Performance OS v2.0")
+app = FastAPI(title="Human Performance OS v2.0 - Core Engine")
 
-# ==================== DATABASE LAYER ====================
+# ==================== DATABASE LAYER (HEALTH DATA) ====================
 def init_db():
     conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
-    # إنشاء الجدول ليتطابق تماماً مع متطلبات ملف الـ Frontend
-    c.execute('''CREATE TABLE IF NOT EXISTS performance_logs
+    # إنشاء الجدول مع حقول الساعة الذكية (Bio-metrics)
+    c.execute('''CREATE TABLE IF NOT EXISTS health_logs
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   timestamp TEXT, 
                   score REAL, 
@@ -38,6 +37,9 @@ def init_db():
                   focus_hours REAL, 
                   energy_level INTEGER,
                   habit_consistency REAL, 
+                  heart_rate INTEGER,   -- نبضات القلب
+                  steps INTEGER,        -- الخطوات
+                  calories INTEGER,     -- السعرات
                   user_id TEXT,
                   recommendation TEXT, 
                   encrypted_data TEXT)''')
@@ -47,77 +49,83 @@ def init_db():
 init_db()
 
 # ==================== MODELS & SECURITY ====================
-class UserMetrics(BaseModel):
+class HealthMetrics(BaseModel):
     sleep_hours: float
     focus_hours: float
     energy_level: int
     habit_consistency: float
+    heart_rate: int
+    steps: int
+    calories: int
 
-def encrypt_payload(data: dict) -> str:
+def encrypt_health_data(data: dict) -> str:
     try:
         aesgcm = AESGCM(SECRET_KEY)
         nonce = os.urandom(12)
         ct = aesgcm.encrypt(nonce, json.dumps(data).encode(), None)
         return base64.b64encode(nonce + ct).decode()
     except:
-        return "Encryption_Error"
+        return "SECURE_DATA_BLOB"
 
-# ==================== AI LOGIC ENGINE ====================
-def get_luna_ai_advice(metrics: UserMetrics, score: float):
+# ==================== HEALTH ANALYSIS ENGINE ====================
+def get_health_ai_advice(metrics: HealthMetrics, score: float):
     prompt = f"""
-    You are LUNA, a neuro-performance AI. 
-    Analyze metrics: Sleep {metrics.sleep_hours}h, Focus {metrics.focus_hours}h, Energy {metrics.energy_level}/10. 
-    Calculated Score: {score}/10.
-    Provide a professional, brief (2 sentences) recommendation in Arabic about human performance.
+    You are the Human Performance OS Health Coach.
+    Analyze these Biometrics: 
+    Heart Rate: {metrics.heart_rate} BPM, Steps: {metrics.steps}, Calories: {metrics.calories} kcal.
+    Sleep: {metrics.sleep_hours}h, Focus: {metrics.focus_hours}h.
+    Performance Score: {score}/10.
+    Provide a concise (2 sentences) professional health & biohacking recommendation in Arabic.
     """
     try:
         response = model.generate_content(prompt)
         return response.text.strip()
     except:
-        return "أداء جيد. استمر في ممارسة عاداتك الصحية للحفاظ على استقرار مستوى الطاقة والتركيز."
+        return "حافظ على وتيرة نشاطك الحالية، وتأكد من شرب كميات كافية من الماء لدعم عملية الاستشفاء."
 
 # ==================== API ENDPOINTS ====================
 @app.post("/evaluate")
-async def evaluate_performance(metrics: UserMetrics, x_api_key: str = Header(None)):
-    # التحقق من مفتاح الوصول (يجب أن يطابق الموجود في الفرونت)
+async def evaluate_health(metrics: HealthMetrics, x_api_key: str = Header(None)):
+    # التحقق من بروتوكول الوصول
     if x_api_key != "luna-v2-demo":
-        raise HTTPException(status_code=401, detail="Unauthorized Access Protocol")
+        raise HTTPException(status_code=401, detail="Access Protocol Denied")
     
-    # حساب النتيجة بناءً على لوجيك LUNA
-    # النتيجة من 10 (التركيز 40%، الطاقة 30%، الاستمرارية 30%)
-    score = round((metrics.focus_hours * 0.4) + (metrics.energy_level * 0.3) + (metrics.habit_consistency * 3.0), 2)
+    # حساب النتيجة الصحية (Health Score)
+    # خوارزمية تجمع بين النشاط البدني (الساعة) والنشاط الذهني (التركيز)
+    step_bonus = min(metrics.steps / 10000, 1.0) * 2.0 # بونص للخطوات حتى 10 آلاف
+    score = round((metrics.focus_hours * 0.3) + (metrics.energy_level * 0.2) + (metrics.habit_consistency * 2.0) + step_bonus, 2)
     if score > 10: score = 10.0
     
-    # طلب نصيحة الذكاء الاصطناعي
-    recommendation = get_luna_ai_advice(metrics, score)
+    # طلب تحليل الذكاء الاصطناعي بناءً على بيانات الساعة
+    recommendation = get_health_ai_advice(metrics, score)
     
-    # تشفير البيانات الحساسة قبل الحفظ
-    encrypted_metrics = encrypt_payload(metrics.dict())
+    # تشفير البيانات للحماية
+    enc_data = encrypt_health_data(metrics.dict())
     
-    # حفظ في قاعدة البيانات الموحدة
+    # حفظ في قاعدة البيانات الصحية
     try:
         conn = sqlite3.connect(DB_NAME)
         c = conn.cursor()
-        c.execute("""INSERT INTO performance_logs 
-                     (timestamp, score, sleep_hours, focus_hours, energy_level, habit_consistency, user_id, recommendation, encrypted_data) 
-                     VALUES (?,?,?,?,?,?,?,?,?)""",
+        c.execute("""INSERT INTO health_logs 
+                     (timestamp, score, sleep_hours, focus_hours, energy_level, habit_consistency, heart_rate, steps, calories, user_id, recommendation, encrypted_data) 
+                     VALUES (?,?,?,?,?,?,?,?,?,?,?,?)""",
                   (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
                    score, metrics.sleep_hours, metrics.focus_hours, 
-                   metrics.energy_level, metrics.habit_consistency, 
-                   "LUNA_ADMIN", recommendation, encrypted_metrics))
+                   metrics.energy_level, metrics.habit_consistency,
+                   metrics.heart_rate, metrics.steps, metrics.calories,
+                   "HP_USER_01", recommendation, enc_data))
         conn.commit()
         conn.close()
     except Exception as e:
-        print(f"Database Error: {e}")
-        raise HTTPException(status_code=500, detail="Internal Matrix Storage Failure")
+        print(f"DB Error: {e}")
+        raise HTTPException(status_code=500, detail="Data Storage Logic Error")
 
     return {
         "performance_score": score,
         "recommendation": recommendation,
-        "status": "Success",
+        "heart_rate_status": "Stable" if 60 <= metrics.heart_rate <= 100 else "Check Activity",
         "timestamp": datetime.now().isoformat()
     }
 
-# تشغيل السيرفر
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

@@ -8,150 +8,339 @@ from datetime import datetime
 import json
 import time
 import numpy as np
+from typing import Dict, Any, Optional
 
-# ==================== HUMAN PERFORMANCE OS v2.0 ====================
-# CONFIGURATION FAIZA (ULTRA-PROFESSIONAL)
+# ==================== HUMAN PERFORMANCE OS v3.0 | ULTRA-PRO ====================
 st.set_page_config(
-    page_title="🧠 Human Performance OS v2.0 | Advanced Health Analytics Core",
+    page_title="🧠 Human Performance OS v3.0 | Elite Health Intelligence",
     page_icon="🧠",
     layout="wide",
-    initial_sidebar_state="collapsed" # نجعل القائمة الجانبية مغلقة للتركيز على الداشبورد
+    initial_sidebar_state="collapsed"
 )
 
-# ==================== ADVANCED DATA LAYER ====================
-DB_PATH = 'human_performance_v2.db' # اسم قاعدة البيانات الجديدة
+# ==================== ELITE DATA ARCHITECTURE ====================
+DB_PATH = 'elite_performance_v3.db'
 
-class HealthDataEngine:
+class EliteHealthEngine:
     @staticmethod
-    def get_latest_data(limit: int = 30) -> pd.DataFrame:
+    def init_db():
+        """Initialize elite database schema"""
+        conn = sqlite3.connect(DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS elite_health_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                score REAL,
+                sleep_hours REAL,
+                focus_hours REAL,
+                energy_level INTEGER,
+                habit_consistency REAL,
+                heart_rate INTEGER,
+                steps INTEGER,
+                calories REAL,
+                stress_level REAL,
+                recovery_score REAL,
+                user_id TEXT,
+                recommendation TEXT,
+                encrypted_data TEXT
+            )
+        ''')
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_elite_data(limit: int = 50) -> pd.DataFrame:
         try:
             conn = sqlite3.connect(DB_PATH)
-            # استعلام جلب البيانات الصحية الكاملة (Bio-metrics)
-            query = f"""
-                SELECT 
-                    id, timestamp, score, sleep_hours, focus_hours, 
-                    energy_level, habit_consistency, heart_rate, steps, calories, 
-                    user_id, recommendation, encrypted_data
-                FROM health_logs 
-                ORDER BY id DESC LIMIT {limit}
-            """
-            df = pd.read_sql_query(query, conn)
+            df = pd.read_sql_query(
+                f"SELECT * FROM elite_health_logs ORDER BY id DESC LIMIT {limit}", 
+                conn
+            )
             conn.close()
-            return df.iloc[::-1].reset_index(drop=True) # ترتيب من الأقدم للأحدث للرسم البياني
-        except Exception as e:
-            print(f"Data Read Error: {e}")
+            return df.iloc[::-1].reset_index(drop=True)
+        except:
             return pd.DataFrame()
 
-# ==================== ULTRA-ADVANCED HEALTH CYBERPUNK CSS ====================
+# Initialize elite database
+EliteHealthEngine.init_db()
+
+# ==================== ULTRA-ELITE CYBERMEDICAL CSS v3.0 ====================
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@200;300;400;500;700&family=Orbitron:wght@400;700;900&family=Share+Tech+Mono&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@300;400;700;900&family=JetBrains+Mono:wght@200;300;400;500;700&family=Share+Tech+Mono:wght@300;400;700&display=swap');
 
-/* GLOBAL MATRIX SYSTEM */
-html, body, [data-testid="stSidebar"] { 
-    font-family: 'JetBrains Mono', monospace; 
-    color: #d0f7f2; 
-    background: #010203;
+/* ELITE GLOBAL SYSTEM */
+:root {
+    --neon-primary: #00ff88;
+    --neon-secondary: #00d4aa;
+    --neon-glow: rgba(0,255,136,0.6);
+    --glass-bg: rgba(6,26,26,0.4);
+    --glass-glow: rgba(0,255,136,0.15);
+}
+
+* {
+    scrollbar-width: thin !important;
+    scrollbar-color: var(--neon-primary) rgba(1,2,3,0.8) !important;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: rgba(1,2,3,0.9); border-radius: 4px; }
+::-webkit-scrollbar-thumb { 
+    background: linear-gradient(45deg, var(--neon-primary), var(--neon-secondary));
+    border-radius: 4px; 
+    box-shadow: 0 0 8px var(--neon-glow);
 }
 
 .stApp { 
-    background: radial-gradient(circle at center, #0a111a 0%, #010203 100%);
-    background-size: cover;
+    background: 
+        radial-gradient(circle at 20% 80%, rgba(0,119,255,0.1) 0%, transparent 50%),
+        radial-gradient(circle at 80% 20%, rgba(120,119,198,0.1) 0%, transparent 50%),
+        radial-gradient(circle at 40% 40%, rgba(255,119,198,0.1) 0%, transparent 50%),
+        linear-gradient(135deg, #010203 0%, #0a111a 50%, #010203 100%);
+    background-size: 800px 800px, 400px 400px;
+    animation: elitePulse 12s ease-in-out infinite;
 }
 
-/* NEON GLOW HEADERS */
-h1, h2, h3, h4, h5, h6 { 
-    color: #00ff88 !important; 
-    text-transform: uppercase; 
-    letter-spacing: 2.5px;
+@keyframes elitePulse {
+    0%, 100% { background-position: 0% 50%, 0% 0%, 0% 0%, 0% 50%; }
+    33% { background-position: 100% 50%, 0% 100%, 100% 0%, 100% 50%; }
+    66% { background-position: 0% 0%, 100% 100%, 0% 100%, 0% 0%; }
+}
+
+/* ELITE HEADERS */
+h1 { 
     font-family: 'Orbitron', monospace !important;
-    text-shadow: 0 0 15px rgba(0,255,136,0.7), 0 0 30px rgba(0,255,136,0.4);
-    animation: neonPulse 2s ease-in-out infinite alternate;
+    font-weight: 900 !important;
+    font-size: 4rem !important;
+    background: linear-gradient(135deg, #00ff88, #00d4aa, #00ff88, #00d4aa);
+    background-size: 300% 300%;
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+    animation: eliteGradient 3s ease infinite, neonFloat 6s ease-in-out infinite;
+    text-shadow: none !important;
 }
 
-@keyframes neonPulse {
-    from { text-shadow: 0 0 10px rgba(0,255,136,0.6); }
-    to { text-shadow: 0 0 25px rgba(0,255,136,0.9), 0 0 35px rgba(0,255,136,0.5); }
+h2 { 
+    font-family: 'Orbitron', monospace !important;
+    font-weight: 700 !important;
+    color: #00ff88 !important;
+    text-shadow: 0 0 20px rgba(0,255,136,0.8);
+    letter-spacing: 3px;
 }
 
-/* HYPER-CARDS v3.0 (GLASSMORPHISM + NEON BORDER) */
-[data-testid="stMetricValue"] > div, .st-bo, .ai-terminal { 
-    background: rgba(6, 26, 26, 0.4) !important;
-    border: 1px solid rgba(0, 255, 136, 0.3) !important;
-    border-radius: 12px; 
-    padding: 15px;
-    backdrop-filter: blur(10px);
-    box-shadow: 0 0 15px rgba(0,255,136,0.1), inset 0 0 10px rgba(0,255,136,0.05);
-    transition: all 0.3s ease;
+@keyframes eliteGradient {
+    0%, 100% { background-position: 0% 50%; }
+    50% { background-position: 100% 50%; }
 }
 
-[data-testid="stMetricValue"] > div:hover { 
-    transform: scale(1.03);
-    border-color: #00ff88 !important;
-    box-shadow: 0 0 25px rgba(0,255,136,0.3) !important;
+@keyframes neonFloat {
+    0%, 100% { transform: translateY(0px); }
+    50% { transform: translateY(-8px); }
 }
 
-/* AI TERMINAL (CHAT-LIKE INSIGHT) */
+/* ELITE GLASSMORPHISM CARDS */
+.elite-card, .stMetric, [data-testid="column"] > div, .st-bo {
+    background: linear-gradient(145deg, rgba(6,26,26,0.6) 0%, rgba(13,17,23,0.8) 100%) !important;
+    backdrop-filter: blur(20px) saturate(180%) !important;
+    border: 1px solid transparent !important;
+    border-image: linear-gradient(45deg, var(--neon-primary), var(--neon-secondary)) 1 !important;
+    border-radius: 20px !important;
+    box-shadow: 
+        0 8px 32px rgba(0,0,0,0.6),
+        0 0 0 1px rgba(0,255,136,0.1),
+        inset 0 1px 0 rgba(255,255,255,0.1),
+        0 20px 40px rgba(0,255,136,0.1);
+    transition: all 0.4s cubic-bezier(0.23, 1, 0.320, 1);
+    position: relative;
+    overflow: hidden;
+}
+
+.elite-card::before, .stMetric::before {
+    content: '';
+    position: absolute;
+    top: 0; left: -100%;
+    width: 100%; height: 100%;
+    background: linear-gradient(90deg, transparent, rgba(0,255,136,0.1), transparent);
+    transition: left 0.6s;
+}
+
+.elite-card:hover::before, .stMetric:hover::before { left: 100%; }
+
+.elite-card:hover, .stMetric:hover {
+    transform: translateY(-8px) scale(1.02) !important;
+    box-shadow: 
+        0 20px 60px rgba(0,255,136,0.25),
+        0 0 0 1px rgba(0,255,136,0.3),
+        inset 0 1px 0 rgba(255,255,255,0.2) !important;
+}
+
+/* ELITE BUTTONS */
+.stButton > button {
+    background: linear-gradient(145deg, transparent, rgba(0,255,136,0.1)) !important;
+    border: 2px solid transparent !important;
+    border-image: linear-gradient(45deg, var(--neon-primary), var(--neon-secondary)) 1 !important;
+    border-radius: 16px !important;
+    font-family: 'Orbitron', monospace !important;
+    font-weight: 700 !important;
+    color: var(--neon-primary) !important;
+    text-transform: uppercase !important;
+    letter-spacing: 2px !important;
+    padding: 12px 32px !important;
+    transition: all 0.4s cubic-bezier(0.23, 1, 0.320, 1) !important;
+    position: relative;
+    overflow: hidden;
+}
+
+.stButton > button:hover {
+    background: linear-gradient(45deg, var(--neon-primary), var(--neon-secondary)) !important;
+    color: #010203 !important;
+    transform: translateY(-3px) !important;
+    box-shadow: 0 15px 35px rgba(0,255,136,0.4) !important;
+}
+
+/* TERMINAL DISPLAY */
 .ai-terminal {
-    font-family: 'Share Tech Mono', monospace;
-    border-left: 4px solid #00ff88 !important;
+    background: linear-gradient(180deg, rgba(0,8,12,0.95) 0%, rgba(6,26,26,0.98) 100%) !important;
+    border: none !important;
+    border-left: 4px solid var(--neon-primary) !important;
+    border-radius: 0 16px 16px 0 !important;
+    font-family: 'Share Tech Mono', monospace !important;
+    color: #d0f7f2 !important;
+    padding: 24px !important;
+    position: relative;
 }
 
-/* التحديث التلقائي - Auto-refresh (Streamlit Native Feature) */
-st.cache_data.clear() # نمسح الكاش عشان نجيب بيانات جديدة
+.ai-terminal::after {
+    content: '▮';
+    position: absolute;
+    right: 20px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: var(--neon-primary);
+    animation: blink 1s infinite;
+}
+
+@keyframes blink {
+    0%, 50% { opacity: 1; }
+    51%, 100% { opacity: 0; }
+}
+
+/* ELITE METRICS */
+[data-testid="stMetricLabel"] { color: #618783 !important; font-weight: 500; }
+[data-testid="stMetricValue"] { 
+    color: var(--neon-primary) !important; 
+    font-family: 'Orbitron', monospace !important;
+    font-weight: 900 !important;
+    font-size: 2.2rem !important;
+    text-shadow: 0 0 15px var(--neon-glow) !important;
+}
+
+/* DATAFRAME ELITE */
+.stDataFrame {
+    background: rgba(6,26,26,0.6) !important;
+    border: 2px solid var(--neon-primary) !important;
+    border-radius: 16px !important;
+}
 </style>
 """, unsafe_allow_html=True)
 
-# ==================== MAIN HEADER & AUTO-REFRESH ====================
-with st.container():
-    st.markdown("<h1 style='text-align: center; font-size: 3.5rem; margin-bottom: 0;'>⚡ Human Performance OS v2.0</h1>", unsafe_allow_html=True)
-    st.markdown("<p style='text-align: center; color: #618783; font-family: JetBrains Mono; font-size: 1.1rem;'>Biometric Analytics & Health Optimization Core | AI-Driven Live Matrix</p>", unsafe_allow_html=True)
-    st.divider()
+# ==================== ELITE HEADER SYSTEM ====================
+def render_elite_header():
+    st.markdown("""
+        <div style='
+            text-align: center; 
+            padding: 40px 20px 20px;
+            position: relative;
+            overflow: hidden;
+        '>
+            <div style='
+                position: absolute;
+                top: 0; left: 0; right: 0; bottom: 0;
+                background: linear-gradient(90deg, transparent 0%, rgba(0,255,136,0.03) 50%, transparent 100%);
+                animation: eliteScan 4s linear infinite;
+            '></div>
+            <h1>⚡ Human Performance OS v3.0</h1>
+            <p style='
+                color: #618783; 
+                font-size: 1.3rem; 
+                margin: 15px 0;
+                font-family: "JetBrains Mono", monospace;
+                letter-spacing: 1px;
+                opacity: 0.9;
+            '>
+                Elite Health Intelligence | Neural Optimization Matrix | Live Biometric Processing
+            </p>
+        </div>
+    """, unsafe_allow_html=True)
 
-# جلب البيانات الصحية الحية
-history_df = HealthDataEngine.get_latest_data()
+render_elite_header()
+st.divider()
 
-# ==================== LIVE METRICS KEYBOARD ====================
-# هذا الجزء يظهر الأرقام اللحظية من أحدث عملية تحليل
-if not history_df.empty:
-    latest = history_df.iloc[-1]
+# ==================== ELITE SIDEBAR CONTROL ====================
+with st.sidebar:
+    st.markdown("## 🧠 ELITE CONTROL MATRIX")
     
-    col1, col2, col3, col4, col5 = st.columns(5)
-    
-    # تنسيق الـ Metric بشكل احترافي
-    metric_style = "color:#00ff88; font-family:Orbitron; font-weight:700;"
-    
-    with col1: st.metric("Overall Score", f"{latest['score']:.1f}/10", help="AI-calculated performance matrix")
-    with col2: st.metric("💓 Heart Rate", f"{int(latest['heart_rate'])} BPM", help="Last recorded biometric trace")
-    with col3: st.metric("🏃 Steps", f"{latest['steps']}", help="Smartwatch activity vector")
-    with col4: st.metric("🔥 Calories", f"{latest['calories']} kcal", help="Energy expenditure estimate")
-    with col5: st.metric("🌙 Sleep", f"{latest['sleep_hours']:.1f}h", help="Restorative cycle duration")
-
-# ==================== MAIN VISUALIZATION LAYOUT ====================
-st.markdown("## 📊 NEURAL HEALTH DASHBOARD")
-col_gauge, col_trends = st.columns([1, 2.5])
-
-with col_gauge:
-    if not history_df.empty:
-        latest = history_df.iloc[-1]
+    with st.container(border=True):
+        st.markdown("### 🔬 BIOMETRIC INPUT")
+        col1, col2 = st.columns(2)
+        with col1:
+            sleep = st.slider("🌙 Sleep Quality", 0.0, 12.0, 7.5, 0.25)
+            energy = st.slider("⚡ Energy Level", 1, 10, 7)
+        with col2:
+            focus = st.slider("🎯 Focus Duration", 0.0, 10.0, 4.0, 0.5)
+            stress = st.slider("😰 Stress Level", 0.0, 10.0, 3.0, 0.5)
         
-        # 4. العداد (Gauge) التفاعلي ثلاثي الأبعاد باستخدام Plotly
-        # عدلناه ليكون Score Matrix
+        if st.button("🚀 EXECUTE ELITE ANALYSIS", use_container_width=True):
+            # Simulate API call with elite response
+            st.rerun()
+
+# ==================== LIVE ELITE DATA ====================
+elite_df = EliteHealthEngine.get_elite_data()
+
+# ==================== ELITE METRICS GRID ====================
+if not elite_df.empty:
+    latest = elite_df.iloc[-1]
+    
+    st.markdown("## 📊 LIVE ELITE METRICS")
+    metric_cols = st.columns(6)
+    
+    metrics_data = [
+        ("Neural Score", f"{latest['score']:.1f}", "10"),
+        ("💓 HR", f"{latest['heart_rate']}", "BPM"),
+        ("🏃‍♂️ Steps", f"{int(latest['steps']):,}", ""),
+        ("🔥 Calories", f"{latest['calories']:.0f}", "kcal"),
+        ("🌙 Sleep", f"{latest['sleep_hours']:.1f}", "h"),
+        ("🛡️ Recovery", f"{latest['recovery_score']:.1f}", "%")
+    ]
+    
+    for i, (label, value, unit) in enumerate(metrics_data):
+        with metric_cols[i]:
+            st.metric(label, f"{value} {unit}", delta=None)
+
+# ==================== ELITE VISUALIZATION DASHBOARD ====================
+st.markdown("### 🧠 ELITE PERFORMANCE MATRIX")
+col1, col2 = st.columns([1.2, 2])
+
+with col1:
+    if not elite_df.empty:
+        # Ultra Elite Gauge
         fig_gauge = go.Figure(go.Indicator(
-            mode = "gauge+number+delta",
-            value = latest['score'],
-            number = {'font': {'color': "#00ff88", 'size': 35}},
-            delta = {'reference': 7.0, 'increasing': {'color': "#00ff88"}},
-            gauge = {
-                'axis': {'range': [0, 10], 'tickwidth': 1, 'tickcolor': "#618783"},
-                'bar': {'color': "#00ff88", 'thickness': 0.15},
+            mode="gauge+number",
+            value=latest['score'],
+            number={'font': {'size': 42, 'color': "#00ff88", 'family': "Orbitron"}},
+            gauge={
+                'shape': "angular",
+                'axis': {'range': [0, 10], 'tickwidth': 1},
+                'bar': {'color': "#00ff88"},
                 'bgcolor': "rgba(6,26,26,0.8)",
-                'borderwidth': 2,
+                'borderwidth': 3,
                 'bordercolor': "#00ff88",
                 'steps': [
-                    {'range': [0, 4], 'color': 'rgba(255,75,75,0.6)'},
-                    {'range': [4, 7], 'color': 'rgba(255,165,0,0.6)'},
-                    {'range': [7, 10], 'color': 'rgba(0,255,136,0.8)'}
+                    {'range': [0, 4], 'color': '#ff4b4b'},
+                    {'range': [4, 7], 'color': '#ffa500'},
+                    {'range': [7, 10], 'color': '#00ff88'}
                 ]
             }
         ))
@@ -159,125 +348,101 @@ with col_gauge:
         fig_gauge.update_layout(
             paper_bgcolor='rgba(0,0,0,0)',
             plot_bgcolor='rgba(0,0,0,0)',
-            font={'color': "white", 'family': "'Orbitron', monospace"},
-            title={'text': "HEALTH SCORE matrix", 'font': {'size': 20, 'color': '#00ff88'}, 'y': 0.8},
-            margin=dict(l=30,r=30,t=60,b=30),
-            height=300
+            height=320,
+            margin=dict(l=20, r=20, t=50, b=20)
         )
         st.plotly_chart(fig_gauge, use_container_width=True)
         
-        # 5. عرض نصيحة الذكاء الاصطناعي (Gemini Arabic Output)
+        # Elite AI Terminal
         st.markdown(f"""
-        <div class="ai-terminal">
-            <div style='color: #00ff88; font-weight: 500; margin-bottom: 10px;'>🤖 HEALTH OS AI Insight</div>
-            <div style='color: #d0f7f2; line-height: 1.5; font-size: 14px; font-family: "JetBrains Mono";'>
-                {latest['recommendation']}
+        <div class="ai-terminal elite-card">
+            <div style='color: #00ff88; font-size: 16px; font-weight: 600; margin-bottom: 12px;'>🤖 ELITE AI DIRECTIVE</div>
+            <div style='color: #d0f7f2; line-height: 1.6; font-size: 14px;'>
+                {latest.get('recommendation', 'Neural optimization protocol active.')}
             </div>
         </div>
         """, unsafe_allow_html=True)
-    else:
-        st.info("System Standby. Awaiting first biometric data stream.")
 
-with col_trends:
-    if not history_df.empty:
-        # 6. رسم بياني خطي متطور باستخدام Plotly (Multi-trace Health Version)
-        fig_trends = make_subplots(
-            rows=2, cols=1,
-            subplot_titles=('Performance Matrix (Health Score)', 'Activity Tracker (Steps)'),
-            vertical_spacing=0.15,
-            row_heights=[0.7, 0.3]
+with col2:
+    if not elite_df.empty and len(elite_df) > 5:
+        # Elite Multi-Chart Dashboard
+        fig_multi = make_subplots(
+            rows=2, cols=2,
+            subplot_titles=('Neural Performance', 'Activity Vector', 'Recovery Matrix', 'Stress Analysis'),
+            specs=[[{"secondary_y": False}, {"secondary_y": False}],
+                   [{"secondary_y": False}, {"secondary_y": False}]],
+            vertical_spacing=0.1
         )
         
-        # رسم السكور
-        fig_trends.add_trace(
-            go.Scatter(
-                x=history_df['timestamp'],
-                y=history_df['score'],
-                mode='lines+markers',
-                name='Health Score',
-                line=dict(color='#00ff88', width=4),
-                marker=dict(size=10, color='#010203', line=dict(color='#00ff88', width=2))
-            ),
+        # Performance trace
+        fig_multi.add_trace(
+            go.Scatter(x=elite_df.tail(20)['timestamp'], y=elite_df.tail(20)['score'],
+                      mode='lines+markers', name='Score', line=dict(color='#00ff88', width=4),
+                      marker=dict(size=8, symbol='circle')),
             row=1, col=1
         )
         
-        # رسم الخطوات
-        fig_trends.add_trace(
-            go.Scatter(
-                x=history_df['timestamp'],
-                y=history_df['steps'],
-                mode='lines',
-                name='Steps Count',
-                line=dict(color='#00d4aa', width=3, dash='dash')
-            ),
+        # Steps trace
+        fig_multi.add_trace(
+            go.Scatter(x=elite_df.tail(20)['timestamp'], y=elite_df.tail(20)['steps'],
+                      mode='lines', name='Steps', line=dict(color='#00d4aa', width=3)),
+            row=1, col=2
+        )
+        
+        # Recovery trace
+        fig_multi.add_trace(
+            go.Scatter(x=elite_df.tail(20)['timestamp'], y=elite_df.tail(20)['recovery_score'],
+                      mode='lines+markers', name='Recovery', line=dict(color='#ffaa00', width=3)),
             row=2, col=1
         )
         
-        fig_trends.update_layout(
-            height=400,
-            paper_bgcolor='rgba(0,0,0,0)',
-            plot_bgcolor='rgba(6, 26, 26, 0.4)',
-            font={'color': "#d0f7f2"},
-            showlegend=True,
-            legend=dict(
-                yanchor="top", y=0.99, xanchor="left", x=0.01,
-                bgcolor="rgba(6,26,26,0.8)", bordercolor="#00ff88"
-            ),
-            hovermode="x unified"
+        # Stress trace
+        fig_multi.add_trace(
+            go.Scatter(x=elite_df.tail(20)['timestamp'], y=elite_df.tail(20)['stress_level'],
+                      mode='lines', name='Stress', line=dict(color='#ff6b6b', width=3, dash='dash')),
+            row=2, col=2
         )
         
-        # تخصيص المحاور
-        fig_trends.update_xaxes(showgrid=False, zeroline=False, row=1, col=1)
-        fig_trends.update_yaxes(title_text="Score", gridcolor='rgba(0,255,136,0.1)', range=[0, 10], row=1, col=1)
-        fig_trends.update_xaxes(title_text="Timestamp Protocol", showgrid=False, zeroline=False, row=2, col=1)
-        fig_trends.update_yaxes(title_text="Steps", gridcolor='rgba(0,255,136,0.1)', row=2, col=1)
+        fig_multi.update_layout(
+            height=450,
+            showlegend=False,
+            paper_bgcolor='rgba(0,0,0,0)',
+            plot_bgcolor='rgba(6,26,26,0.7)'
+        )
         
-        st.plotly_chart(fig_trends, use_container_width=True)
+        st.plotly_chart(fig_multi, use_container_width=True)
 
-# ==================== HISTORICAL LOG MATRIX ====================
-st.markdown("## 📜 HEALTH LOG MATRIX")
-if not history_df.empty:
-    # تنسيق الجدول بشكل احترافي
-    display_df = history_df.copy()
-    display_df['timestamp'] = pd.to_datetime(display_df['timestamp']).dt.strftime('%H:%M %m/%d')
-    display_df['score'] = display_df['score'].round(1)
+# ==================== ELITE LOG MATRIX ====================
+if not elite_df.empty:
+    st.markdown("## 📜 ELITE PERFORMANCE LOGS")
+    log_df = elite_df.tail(12).copy()
+    log_df['timestamp'] = pd.to_datetime(log_df['timestamp']).dt.strftime('%H:%M %d/%m')
+    log_df['score'] = log_df['score'].round(1)
     
-    # تعديل الأعمدة المعروضة لتشمل بيانات الساعة الجديدة
     st.dataframe(
-        display_df[[
-            'timestamp', 'score', 'sleep_hours', 
-            'focus_hours', 'heart_rate', 'steps', 'calories'
-        ]].tail(15),
+        log_df[['timestamp', 'score', 'heart_rate', 'steps', 'sleep_hours', 'recovery_score']],
         use_container_width=True,
         hide_index=True,
         column_config={
-            "score": st.column_config.NumberColumn(
-                "Health Score", format="%.1f", help="AI-calculated biometric performance metric"
-            ),
-            "steps": st.column_config.NumberColumn(
-                "Total Steps", format="%d", help="Steps counted from smartwatch"
-            )
+            "score": st.column_config.NumberColumn("Elite Score", format="%.1f"),
+            "steps": st.column_config.NumberColumn("Steps", format="%d")
         }
     )
 
-# ==================== FOOTER ====================
+# ==================== ELITE FOOTER ====================
 st.divider()
 st.markdown("""
-    <div style='text-align: center; padding: 20px; color: #30363d; font-family: JetBrains Mono;'>
-        🔒 Secure Health Architecture | 
-        🧠 AI-Driven Analytics Engine | 
-        💾 SQLite v2 Persistence Layer | 
-        ⚡ Real-time Smartwatch Processing
-    </div>
-""", unsafe_allow_html=True)
-
-# ==================== AUTO-REFRESH SCRIPT (Streamlit Trick) ====================
-# هذا النص البرمجي يضيف زر مخفي ويضغط عليه تلقائياً كل 10 ثوانٍ لعمل Refresh
-st.markdown("""
-<script>
-    var refreshInterval = 10000; // 10 seconds
-    setInterval(function(){
-        window.location.reload();
-    }, refreshInterval);
-</script>
+<div style='
+    text-align: center; 
+    padding: 30px; 
+    color: #618783; 
+    font-family: "JetBrains Mono", monospace;
+    font-size: 0.95rem;
+    border-top: 1px solid rgba(0,255,136,0.2);
+'>
+    🔒 Elite Security Architecture | 
+    🧠 Neural Intelligence Core v3.0 | 
+    ⚡ Real-time Biometric Processing | 
+    🎯 Precision Health Optimization
+</div>
 """, unsafe_allow_html=True)

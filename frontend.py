@@ -282,8 +282,8 @@ st.divider()
 with st.sidebar:
     st.markdown("## 🧠 ELITE CONTROL MATRIX")
     
-    # تعريف المتغير هنا يحل مشكلة NameError تماماً
-    api_key_input = st.text_input(
+    # تأكد أن الاسم هنا هو api_key فقط بدون _input
+    api_key = st.text_input(
         "🔑 Neural Access Key", 
         type="password", 
         value="luna-v4-elite",
@@ -312,34 +312,34 @@ with st.sidebar:
             stress = st.slider("😰 Stress Level", 0.0, 10.0, 3.0, 0.5)
         
         if st.button("🚀 EXECUTE ELITE ANALYSIS", use_container_width=True):
-            with st.spinner('🧬 Synchronizing with Neural Core...'):
-                # 1. تجهيز البيانات (تأكد أن الأسماء تطابق السلايدرز عندك)
-                # إذا كانت أسماء السلايدرز مختلفة (مثلاً sleep_quality)، غيرها هنا
-                payload = {
-                    "sleep_hours": float(sleep), 
-                    "focus_hours": float(focus),
-                    "energy_level": int(energy),
-                    "stress_level": float(stress),
-                    "heart_rate": 75,   
-                    "steps": 8000,
-                    "calories": 2500.0
-                }
-                
-                # 2. إرسال الطلب للسيرفر v4.0 باستخدام التوكن
-                # ملاحظة: api_key_input هو المتغير الذي عرفناه في السايد بار
-                headers = {
-                    "Authorization": f"Bearer {api_key_input}",
-                    "Content-Type": "application/json"
-                }
-                
-                try:
-                    # نرسل البيانات لعنوان الباك-إند
-                    response = requests.post(
-                        "http://localhost:8000/api/v4/evaluate", 
-                        json=payload, 
-                        headers=headers,
-                        timeout=10
-                    )
+    with st.spinner('🧬 Synchronizing with Neural Core...'):
+    
+        # 1. تأكد أن المتغير هنا يطابق ما كتبته في الـ sidebar (api_key_input)
+        headers = {
+            "Authorization": f"Bearer {api_key_input}",
+            "Content-Type": "application/json"
+        }
+        
+        # 2. تجهيز البيانات (Payload)
+        payload = {
+            "sleep_hours": float(sleep_quality), 
+            "focus_hours": float(focus_duration),
+            "energy_level": int(energy_level),
+            "stress_level": float(stress_level),
+            "heart_rate": 75,
+            "steps": 8000,
+            "calories": 2500.0
+        }
+        
+        # 3. إرسال الطلب للسيرفر
+        try:
+            response = requests.post(
+                "http://localhost:8000/api/v4/evaluate", 
+                json=payload, 
+                headers=headers
+            )
+            # ... باقي الكود الخاص بـ st.success و st.rerun
+
                     
                     if response.status_code == 200:
                         st.success("✅ Neural Protocol Executed | Data Matrix Updated")

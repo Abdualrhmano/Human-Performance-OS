@@ -1,0 +1,8 @@
+fastapi
+uvicorn
+pydantic
+cryptography
+slowapi
+streamlit
+requests
+pandas

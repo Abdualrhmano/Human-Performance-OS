@@ -307,6 +307,7 @@ with col_left:
         latest = history_df.iloc[-1]
         
         # Advanced 3D Gauge
+                # --- كود الـ Gauge المصلح لتجنب الخطأ البرمجي ---
         fig_gauge = go.Figure(go.Indicator(
             mode="gauge+number+delta",
             value=latest['score'],
@@ -331,16 +332,29 @@ with col_left:
             }
         ))
         
+        # قمنا بدمج العنوان في سطر واحد واستخدمنا <br> للفصل البصري
+        full_title = f"SYSTEM PERFORMANCE MATRIX <br>Score: {latest['score']:.1f}/10"
+
         fig_gauge.update_layout(
             paper_bgcolor='rgba(0,0,0,0)',
             plot_bgcolor='rgba(0,0,0,0)',
             font={'color': "#d0f7f2", 'family': "Orbitron"},
-            title={'text': f"SYSTEM PERFORMANCE MATRIX
-Score: {latest['score']:.1f}/10", 
-                   'font': {'size': 16, 'color': '#00ff88'}, 'y': 0.75},
+            title={'text': full_title, 'font': {'size': 16, 'color': '#00ff88'}, 'y': 0.8},
             height=300
         )
         st.plotly_chart(fig_gauge, use_container_width=True)
+        
+        # Neural Recommendation Terminal (صندوق نصيحة لونا)
+        with st.container():
+            st.markdown(f"""
+            <div class="ai-terminal">
+                <div style='color: #00ff88; font-weight: 500; margin-bottom: 10px;'>🤖 LUNA NEURAL INSIGHT</div>
+                <div style='color: #d0f7f2; line-height: 1.5; font-size: 14px;'>
+                    {latest['recommendation']}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
         
         # Neural Recommendation Terminal
         with st.container():

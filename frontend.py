@@ -311,18 +311,46 @@ with st.sidebar:
             focus = st.slider("🎯 Focus Duration", 0.0, 10.0, 4.0, 0.5)
             stress = st.slider("😰 Stress Level", 0.0, 10.0, 3.0, 0.5)
         
-if st.button("🚀 EXECUTE ELITE ANALYSIS", use_container_width=True):
-     with st.spinner('🧬 Synchronizing with Neural Core...'):
-                # 1. تجهيز البيانات من السلايدرز (تأكد من مطابقة أسماء المتغيرات لديك)
+        if st.button("🚀 EXECUTE ELITE ANALYSIS", use_container_width=True):
+            with st.spinner('🧬 Synchronizing with Neural Core...'):
+                # 1. تجهيز البيانات (تأكد أن الأسماء تطابق السلايدرز عندك)
+                # إذا كانت أسماء السلايدرز مختلفة (مثلاً sleep_quality)، غيرها هنا
                 payload = {
                     "sleep_hours": float(sleep), 
                     "focus_hours": float(focus),
                     "energy_level": int(energy),
                     "stress_level": float(stress),
-                    "heart_rate": 75,   # قيم افتراضية حتى يتم ربط الساعة
+                    "heart_rate": 75,   
                     "steps": 8000,
                     "calories": 2500.0
                 }
+                
+                # 2. إرسال الطلب للسيرفر v4.0 باستخدام التوكن
+                # ملاحظة: api_key_input هو المتغير الذي عرفناه في السايد بار
+                headers = {
+                    "Authorization": f"Bearer {api_key_input}",
+                    "Content-Type": "application/json"
+                }
+                
+                try:
+                    # نرسل البيانات لعنوان الباك-إند
+                    response = requests.post(
+                        "http://localhost:8000/api/v4/evaluate", 
+                        json=payload, 
+                        headers=headers,
+                        timeout=10
+                    )
+                    
+                    if response.status_code == 200:
+                        st.success("✅ Neural Protocol Executed | Data Matrix Updated")
+                        time.sleep(1)
+                        st.rerun() # تحديث الشاشة لإظهار النتائج الجديدة في الرسوم البيانية
+                    else:
+                        st.error(f"❌ Access Denied: {response.status_code}")
+                
+                except Exception as e:
+                    st.error("📡 Backend Offline: تأكد من تشغيل ملف main.py أولاً")
+
                 
                 # 2. إرسال البيانات للباك-إند باستخدام الـ Token
                 headers = {"Authorization": f"Bearer {api_key}"}

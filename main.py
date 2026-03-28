@@ -11,7 +11,7 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 # ==================== CONFIGURATION ====================
 # ضع مفتاح Gemini API الخاص بك هنا
-GEMINI_API_KEY = "YOUR_GEMINI_API_KEY_HERE" 
+GEMINI_API_KEY = "AIzaSyCG7WK6t9Fn73Oq2ajJ337KRUrW57X82Ao" 
 SECRET_KEY = b"1Xt5YfM4ZNuFdwp3OfVkwkhhQLagWKtt" 
 DB_NAME = 'human_performance_v2.db'
 

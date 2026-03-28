@@ -1,100 +1,123 @@
-# main.py - AI-Powered Human Performance OS
-from fastapi import FastAPI, Depends, Request, HTTPException, Header
+from fastapi import FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel
 import uvicorn
-import os
-import base64
-import json
 import sqlite3
 import google.generativeai as genai
 from datetime import datetime
-from typing import Dict, Any
+import os
+import base64
+import json
+import time
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
-# 1. إعدادات الأمان والذكاء الاصطناعي
-# ضع مفتاحك هنا مكان النص بالأسفل
+# ==================== CONFIGURATION ====================
+# استبدل هذا المفتاح بمفتاحك الذي حصلت عليه من Google AI Studio
 GEMINI_API_KEY = "AIzaSyCG7WK6t9Fn73Oq2ajJ337KRUrW57X82Ao" 
-SECRET_KEY = b"1Xt5YfM4ZNuFdwp3OfVkwkhhQLagWKtt"
-API_KEYS = {"demo-key": "user1"}
+SECRET_KEY = b"1Xt5YfM4ZNuFdwp3OfVkwkhhQLagWKtt" # مفتاح التشفير (يجب أن يكون 32 حرف)
+DB_NAME = 'luna_performance_v2.db'
 
-# تهيئة موديل Gemini
-genai.configure(api_key=GEMINI_API_KEY)
-model = genai.GenerativeModel('gemini-1.5-flash')
+# تهيئة ذكاء LUNA الاصطناعي
+try:
+    genai.configure(api_key=GEMINI_API_KEY)
+    model = genai.GenerativeModel('gemini-1.5-flash')
+except Exception as e:
+    print(f"AI Core Warning: {e}")
 
-app = FastAPI(title="LUNA AI Core")
+app = FastAPI(title="Human Performance OS v2.0")
 
-# 2. قاعدة البيانات
+# ==================== DATABASE LAYER ====================
 def init_db():
-    conn = sqlite3.connect('performance.db')
+    conn = sqlite3.connect(DB_NAME)
     c = conn.cursor()
+    # إنشاء الجدول ليتطابق تماماً مع متطلبات ملف الـ Frontend
     c.execute('''CREATE TABLE IF NOT EXISTS performance_logs
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  timestamp TEXT, user_id TEXT, score REAL,
-                  recommendation TEXT, encrypted_data TEXT)''')
+                  timestamp TEXT, 
+                  score REAL, 
+                  sleep_hours REAL,
+                  focus_hours REAL, 
+                  energy_level INTEGER,
+                  habit_consistency REAL, 
+                  user_id TEXT,
+                  recommendation TEXT, 
+                  encrypted_data TEXT)''')
     conn.commit()
     conn.close()
 
 init_db()
 
+# ==================== MODELS & SECURITY ====================
 class UserMetrics(BaseModel):
     sleep_hours: float
     focus_hours: float
-    energy_level: float
+    energy_level: int
     habit_consistency: float
 
-# 3. محرك تحليل الذكاء الاصطناعي (AI Analysis Engine)
-def get_ai_insight(metrics: UserMetrics, score: float):
+def encrypt_payload(data: dict) -> str:
+    try:
+        aesgcm = AESGCM(SECRET_KEY)
+        nonce = os.urandom(12)
+        ct = aesgcm.encrypt(nonce, json.dumps(data).encode(), None)
+        return base64.b64encode(nonce + ct).decode()
+    except:
+        return "Encryption_Error"
+
+# ==================== AI LOGIC ENGINE ====================
+def get_luna_ai_advice(metrics: UserMetrics, score: float):
     prompt = f"""
-    You are LUNA, an AI Performance Coach. Analyze these metrics:
-    Sleep: {metrics.sleep_hours}h, Focus: {metrics.focus_hours}h, 
-    Energy: {metrics.energy_level}/10, Consistency: {metrics.habit_consistency*100}%.
-    System Score: {score}/10.
-    
-    Provide a professional, 2-sentence biohacking recommendation in Arabic. 
-    Focus on neuro-efficiency and recovery.
+    You are LUNA, a neuro-performance AI. 
+    Analyze metrics: Sleep {metrics.sleep_hours}h, Focus {metrics.focus_hours}h, Energy {metrics.energy_level}/10. 
+    Calculated Score: {score}/10.
+    Provide a professional, brief (2 sentences) recommendation in Arabic about human performance.
     """
     try:
         response = model.generate_content(prompt)
         return response.text.strip()
-    except Exception as e:
-        return "أداء مستقر. ركز على شرب الماء وتنظيم فترات الراحة لزيادة الإنتاجية."
+    except:
+        return "أداء جيد. استمر في ممارسة عاداتك الصحية للحفاظ على استقرار مستوى الطاقة والتركيز."
 
-# 4. التشفير
-def encrypt_data(data: Dict[str, Any]) -> str:
-    aesgcm = AESGCM(SECRET_KEY)
-    nonce = os.urandom(12)
-    ciphertext = aesgcm.encrypt(nonce, json.dumps(data).encode(), None)
-    return base64.b64encode(nonce + ciphertext).decode()
-
-# 5. Endpoint الأساسي
+# ==================== API ENDPOINTS ====================
 @app.post("/evaluate")
 async def evaluate_performance(metrics: UserMetrics, x_api_key: str = Header(None)):
-    if x_api_key not in API_KEYS:
-        raise HTTPException(status_code=401, detail="Invalid Key")
+    # التحقق من مفتاح الوصول (يجب أن يطابق الموجود في الفرونت)
+    if x_api_key != "luna-v2-demo":
+        raise HTTPException(status_code=401, detail="Unauthorized Access Protocol")
     
-    # حساب السكور المبدئي
+    # حساب النتيجة بناءً على لوجيك LUNA
+    # النتيجة من 10 (التركيز 40%، الطاقة 30%، الاستمرارية 30%)
     score = round((metrics.focus_hours * 0.4) + (metrics.energy_level * 0.3) + (metrics.habit_consistency * 3.0), 2)
+    if score > 10: score = 10.0
     
-    # طلب تحليل الذكاء الاصطناعي من Gemini
-    recommendation = get_ai_insight(metrics, score)
+    # طلب نصيحة الذكاء الاصطناعي
+    recommendation = get_luna_ai_advice(metrics, score)
     
-    # تشفير البيانات وحفظها
-    encrypted_metrics = encrypt_data(metrics.dict())
-    current_time = datetime.now().isoformat()
+    # تشفير البيانات الحساسة قبل الحفظ
+    encrypted_metrics = encrypt_payload(metrics.dict())
     
-    conn = sqlite3.connect('performance.db')
-    c = conn.cursor()
-    c.execute("INSERT INTO performance_logs (timestamp, user_id, score, recommendation, encrypted_data) VALUES (?,?,?,?,?)",
-              (current_time, API_KEYS[x_api_key], score, recommendation, encrypted_metrics))
-    conn.commit()
-    conn.close()
+    # حفظ في قاعدة البيانات الموحدة
+    try:
+        conn = sqlite3.connect(DB_NAME)
+        c = conn.cursor()
+        c.execute("""INSERT INTO performance_logs 
+                     (timestamp, score, sleep_hours, focus_hours, energy_level, habit_consistency, user_id, recommendation, encrypted_data) 
+                     VALUES (?,?,?,?,?,?,?,?,?)""",
+                  (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), 
+                   score, metrics.sleep_hours, metrics.focus_hours, 
+                   metrics.energy_level, metrics.habit_consistency, 
+                   "LUNA_ADMIN", recommendation, encrypted_metrics))
+        conn.commit()
+        conn.close()
+    except Exception as e:
+        print(f"Database Error: {e}")
+        raise HTTPException(status_code=500, detail="Internal Matrix Storage Failure")
 
     return {
         "performance_score": score,
         "recommendation": recommendation,
-        "encrypted_data": encrypted_metrics,
-        "timestamp": current_time
+        "status": "Success",
+        "timestamp": datetime.now().isoformat()
     }
 
+# تشغيل السيرفر
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)

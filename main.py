@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from fastapi import FastAPI, Depends, Header, HTTPException
 from fastapi.security import OAuth2PasswordBearer
 from fastapi.middleware.cors import CORSMiddleware  # حجر الزاوية للربط بالفرانت إند
+from fastapi.security import OAuth2PasswordRequestForm
 
 # --- 1. CENTRAL CONFIGURATION ---
 class SystemConfig:
@@ -244,53 +245,71 @@ async def sync_and_analyze(
     token: str = Depends(oauth2_scheme)
 ):
     """
-    هذا المسار يستقبل بيانات الساعة والموبايل، يحللها، 
-    ويخزنها مشفرة مع نصيحة Gemini.
+    نقطة المزامنة العصبية: تستقبل البيانات، تستشير Gemini، 
+    وتؤمن السجلات في قاعدة البيانات المشفرة.
     """
-    # أ. فك تشفير التوكن (التحقق من الهوية)
+    
+    # أ. فك تشفير التوكن والتحقق من الهوية (Identity Shield)
     try:
         payload = jwt.decode(token, SystemConfig.SECRET_KEY, algorithms=[SystemConfig.ALGORITHM])
         user_id = payload.get("user_id")
-    except:
-        raise HTTPException(status_code=403, detail="Invalid or Expired Session")
+        username = payload.get("sub")
+        
+        if not user_id:
+            raise HTTPException(status_code=403, detail="Unauthorized: User ID missing")
+            
+    except jwt.PyJWTError:
+        raise HTTPException(status_code=403, detail="Session Expired or Compromised")
 
-    # ب. معالجة السكور (الجهاز العصبي)
+    # ب. معالجة السكور (Neural Computing Unit)
+    # بنستخدم الـ Processor اللي أنت صممته لحساب الأداء
     performance_score = NeuralProcessor.calculate_score(data)
     
-    # ج. استشارة العقل (LUNA Neural Brain)
-    with sqlite3.connect(db_manager.db_name) as conn:
-        current_metrics = {
-            "hr": data.heart_rate, 
-            "steps": data.steps, 
-            "screen_time": data.screen_time, 
-            "sleep": data.sleep_hours, 
-            "score": performance_score
-        }
-        
-        # استدعاء الذاكرة وتوليد النصيحة من Gemini
-        ai_insight = advisor.get_verdict(conn, user_id, current_metrics)
+    # ج. استشارة العقل (LUNA Neural Brain) والتخزين
+    try:
+        with sqlite3.connect(db_manager.db_name) as conn:
+            current_metrics = {
+                "hr": data.heart_rate, 
+                "steps": data.steps, 
+                "screen_time": data.screen_time, 
+                "sleep": data.sleep_hours, 
+                "score": performance_score
+            }
+            
+            # محاولة جلب النصيحة من Gemini (مع معالجة الأخطاء)
+            try:
+                ai_insight = advisor.get_verdict(conn, user_id, current_metrics)
+            except Exception as ai_err:
+                print(f"AI Brain Error: {ai_err}")
+                ai_insight = "LUNA is recalibrating. Maintain current focus levels."
 
-        # د. الحفظ النهائي في قاعدة البيانات
-        cursor = conn.cursor()
-        cursor.execute("""
-            INSERT INTO performance_logs 
-            (user_id, heart_rate, steps, screen_time, sleep_hours, 
-             performance_score, ai_recommendation, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """, (user_id, data.heart_rate, data.steps, data.screen_time, data.sleep_hours, 
-              performance_score, ai_insight, datetime.now()))
-        conn.commit()
+            # د. الحفظ النهائي في قاعدة البيانات (Persistence Layer)
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT INTO performance_logs 
+                (user_id, heart_rate, steps, screen_time, sleep_hours, 
+                 performance_score, ai_recommendation, timestamp)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """, (user_id, data.heart_rate, data.steps, data.screen_time, data.sleep_hours, 
+                  performance_score, ai_insight, datetime.now().isoformat()))
+            conn.commit()
 
-    # هـ. الرد النهائي للفرانت إند (JSON Response)
+    except sqlite3.Error as db_err:
+        print(f"Database Error: {db_err}")
+        raise HTTPException(status_code=500, detail="Data Persistence Failure")
+
+    # هـ. الرد النهائي للواجهة (JSON Insight Response)
     return {
         "status": "synchronized",
-        "performance_score": performance_score,
+        "user_identity": username,
+        "performance_score": round(performance_score, 2),
         "ai_insight": ai_insight,
         "metrics_summary": {
-            "is_optimal": performance_score > 70,
-            "heart_rate_status": "Stable" if data.heart_rate < 100 else "High"
+            "is_optimal": performance_score > 75,
+            "system_state": "Operational",
+            "biometric_alert": "Nominal" if data.heart_rate < 100 else "Elevated"
         },
-        "server_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        "sync_token": datetime.now().strftime("%Y%m%d%H%M%S")
     }
 
 # --- 2. SERVER ENTRY POINT (نقطة انطلاق النظام) ---

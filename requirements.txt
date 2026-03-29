@@ -1,12 +1,23 @@
-fastapi
-uvicorn
-pydantic
-python-multipart
-cryptography
-google-generativeai
-streamlit
-requests
-pandas
-plotly
-numpy
-python-dotenv
+# --- BACKEND CORE ---
+fastapi==0.109.0
+uvicorn==0.27.0
+pydantic==2.6.0
+python-multipart==0.0.6
+
+# --- SECURITY & AUTH ---
+cryptography==42.0.2
+passlib[bcrypt]==1.7.4
+PyJWT==2.8.0
+
+# --- AI & LOGIC ---
+google-generativeai==0.3.2
+numpy==1.26.3
+
+# --- FRONTEND (STREAMLIT) ---
+streamlit==1.30.0
+requests==2.31.0
+pandas==2.2.0
+plotly==5.18.0
+
+# --- UTILS ---
+python-dotenv==1.0.1

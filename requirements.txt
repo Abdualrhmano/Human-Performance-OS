@@ -20,5 +20,10 @@ pandas==2.2.0
 plotly==5.18.0
 watchdog==4.0.0
 
+# --- HARDWARE & ASYNC ---
+bleak==0.21.1
+aiohttp==3.9.3
+aiosqlite==0.19.0
+
 # --- UTILS ---
 python-dotenv==1.0.1

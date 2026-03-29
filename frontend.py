@@ -1,7 +1,7 @@
 # ======================================================
-# SYSTEM: Human Performance OS v2.0
+# SYSTEM: Human Performance OS v2.0 (PART 1)
 # ARCHITECT: Abdulrahman (Lead Software Engineer)
-# MODULE: NEURAL & HARDWARE INTERFACE (FINAL PRO)
+# MODULE: LOGIC, BLE & NEURAL SIMULATION ENGINE
 # ======================================================
 
 import streamlit as st
@@ -12,10 +12,11 @@ import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime
 import asyncio
+import random
 from bleak import BleakClient, BleakScanner
 
 # ------------------------------------------------------
-# 1. PROFESSIONAL UI CONFIGURATION (تنسيق الواجهة الاحترافية)
+# 1. PROFESSIONAL UI CONFIGURATION
 # ------------------------------------------------------
 class SystemUI:
     @staticmethod
@@ -25,64 +26,52 @@ class SystemUI:
             <style>
             @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=JetBrains+Mono:wght@300;500&display=swap');
             :root { --primary: #00ff88; --bg: #05070a; --card-bg: rgba(13, 17, 23, 0.9); }
-            
             html, body, [data-testid="stSidebar"] { font-family: 'JetBrains Mono', monospace; background-color: var(--bg); }
-            
-            .main-title {
-                font-family: 'Orbitron', sans-serif;
-                color: var(--primary);
-                text-shadow: 0 0 15px rgba(0, 255, 136, 0.4);
-                font-size: 3.2em;
-                text-align: center;
-                margin-bottom: 0px;
-            }
-            
-            .status-bar {
-                background: rgba(0, 255, 136, 0.05);
-                border: 1px solid rgba(0, 255, 136, 0.2);
-                border-radius: 10px;
-                padding: 15px;
-                margin-bottom: 25px;
-            }
-            
-            .ai-insight-card {
-                background: linear-gradient(145deg, rgba(0,255,136,0.05), rgba(0,0,0,0.5));
-                border-left: 5px solid var(--primary);
-                padding: 25px;
-                border-radius: 12px;
-                box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-            }
+            .main-title { font-family: 'Orbitron', sans-serif; color: var(--primary); text-shadow: 0 0 15px rgba(0, 255, 136, 0.4); font-size: 3.2em; text-align: center; margin-bottom: 0px; }
+            .ai-insight-card { background: linear-gradient(145deg, rgba(0,255,136,0.05), rgba(0,0,0,0.5)); border-left: 5px solid var(--primary); padding: 25px; border-radius: 12px; box-shadow: 0 10px 30px rgba(0,0,0,0.3); }
             </style>
         """, unsafe_allow_html=True)
 
 # ------------------------------------------------------
-# 2. ADVANCED BLUETOOTH ENGINE (محرك البلوتوث المتقدم)
+# 2. ADVANCED HYBRID BLUETOOTH ENGINE (تطوير المحاكاة)
 # ------------------------------------------------------
 class BluetoothEngine:
-    # Standard Heart Rate Service UUID
     HR_SERVICE_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
 
     @staticmethod
     async def scan_active_devices():
-        """البحث عن كافة الأجهزة المتاحة في النطاق"""
-        devices = await BleakScanner.discover()
-        return {d.name if d.name else f"Unknown ({d.address})": d.address for d in devices}
+        """البحث عن الأجهزة الحقيقية أو توفير أجهزة محاكاة في حال فشل الاتصال بالسحاب"""
+        try:
+            devices = await BleakScanner.discover(timeout=2.0)
+            if devices:
+                return {d.name if d.name else f"Unknown ({d.address})": d.address for d in devices}
+            raise Exception("No real devices found")
+        except:
+            # نظام المحاكاة للعمل في بيئة Codespaces
+            return {
+                "LUNA-Watch-Pro (Simulated)": "SIM:DEVICE:01",
+                "Bio-Neural-Link (Simulated)": "SIM:DEVICE:02"
+            }
 
     @staticmethod
     async def fetch_live_biometrics(address):
-        """الاتصال بالجهاز المختار وجلب البيانات"""
+        """جلب البيانات من حساس حقيقي أو توليد بيانات محاكاة ذكية"""
+        if "SIM" in str(address):
+            await asyncio.sleep(1.5) # محاكاة وقت المعالجة
+            return random.randint(65, 85)
+            
         try:
-            async with BleakClient(address, timeout=12.0) as client:
+            async with BleakClient(address, timeout=10.0) as client:
                 if await client.is_connected():
                     raw_data = await client.read_gatt_char(BluetoothEngine.HR_SERVICE_UUID)
-                    return raw_data[1] # قراءة النبض اللحظي
+                    return raw_data[1]
                 return None
         except Exception as e:
             st.sidebar.error(f"Hardware Link Error: {str(e)}")
             return None
 
 # ------------------------------------------------------
-# 3. CORE SYSTEM BRIDGE (الربط البرمجي الشامل)
+# 3. CORE SYSTEM BRIDGE
 # ------------------------------------------------------
 class CoreBridge:
     DB_PATH = 'human_performance_v2.db'
@@ -104,10 +93,12 @@ class CoreBridge:
             response = requests.post(f"{CoreBridge.API_ENDPOINT}/performance/sync", json=payload, headers=headers)
             return response.json() if response.status_code == 200 else None
         except: return None
+# ======================================================
+# SYSTEM: Human Performance OS v2.0 (PART 2)
+# MODULE: DASHBOARD RENDERER & UI INTERACTION
+# ======================================================
 
-# ------------------------------------------------------
-# 4. SYSTEM RENDERER (تشغيل الواجهة النهائية)
-# ------------------------------------------------------
+# التشغيل الأولي لإعدادات الواجهة
 SystemUI.setup()
 
 # --- Sidebar Control Center ---
@@ -124,6 +115,7 @@ with st.sidebar:
     if input_mode:
         if st.button("🔍 Scan for Active Devices"):
             with st.spinner("Scanning BLE Frequencies..."):
+                # استدعاء المحرك الهجين (حقيقي/محاكي)
                 st.session_state.ble_devices = asyncio.run(BluetoothEngine.scan_active_devices())
         
         if "ble_devices" in st.session_state and st.session_state.ble_devices:
@@ -150,9 +142,9 @@ if init_sync:
         st.warning("⚠️ Authentication key missing. Neural sync aborted.")
     else:
         active_hr = hr_val
-        # ميزة البلوتوث الحية
+        # ميزة البلوتوث (الحية أو المحاكاة)
         if input_mode and selected_address:
-            with st.spinner(f"Establishing link with {selected_address}..."):
+            with st.spinner(f"Establishing link..."):
                 ble_hr = asyncio.run(BluetoothEngine.fetch_live_biometrics(selected_address))
                 if ble_hr: active_hr = ble_hr
         
@@ -162,11 +154,9 @@ if init_sync:
             
             if sync_result:
                 st.toast("System Sync Complete", icon="✅")
-                
                 col_g, col_i = st.columns([1, 1.5], gap="large")
                 
                 with col_g:
-                    # Gauge الاحترافي
                     fig = go.Figure(go.Indicator(
                         mode = "gauge+number",
                         value = sync_result['performance_score'],
@@ -182,19 +172,18 @@ if init_sync:
                     st.plotly_chart(fig, use_container_width=True)
                 
                 with col_i:
+                    source_label = 'Simulated Hardware' if "SIM" in str(selected_address) else ('Real Sensor' if input_mode else 'Manual Override')
                     st.markdown(f"""
                         <div class="ai-insight-card">
                             <h3 style="color:#00ff88; margin-top:0;">🤖 Neural Analysis Verdict</h3>
                             <p style="font-size:1.2em; line-height:1.6;">{sync_result['ai_insight']}</p>
                             <hr style="border: 0.5px solid rgba(0,255,136,0.2)">
                             <p style="color:#8b949e; font-size:0.9em;">
-                                <b>Source:</b> {'Bluetooth Sensor' if input_mode else 'Manual Override'} | 
+                                <b>Source:</b> {source_label} | 
                                 <b>Telemetry:</b> HR {active_hr} BPM / Steps {step_val}
                             </p>
                         </div>
                     """, unsafe_allow_html=True)
-            else:
-                st.error("Neural Sync Failed. Please verify Server status and Access Key.")
 
 # --- Analytics History ---
 st.divider()
@@ -202,7 +191,6 @@ st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>📊 Performance H
 history_df = CoreBridge.fetch_historical_data()
 
 if not history_df.empty:
-    # الرسم البياني المطور (Area Chart)
     fig_hist = px.area(history_df, x='timestamp', y='performance_score')
     fig_hist.update_traces(line_color='#00ff88', fillcolor='rgba(0, 255, 136, 0.1)', line_width=4)
     fig_hist.update_layout(
@@ -215,7 +203,5 @@ if not history_df.empty:
     
     with st.expander("View Raw Logs"):
         st.dataframe(history_df, use_container_width=True)
-else:
-    st.info("System Standby: Connect to human_performance_v2.db to initialize historical tracking.")
 
-st.markdown(f"<div style='text-align:center; margin-top:50px; color:#30363d;'>HUMAN PERFORMANCE OS v2.0 | SECURE BIOMETRIC GATEWAY | {datetime.now().year}</div>", unsafe_allow_html=True)
+st.markdown(f"<div style='text-align:center; margin-top:50px; color:#30363d;'>Human Performance OS v2.0 | SECURE BIOMETRIC GATEWAY | {datetime.now().year}</div>", unsafe_allow_html=True)

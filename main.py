@@ -39,12 +39,14 @@ class SecurityProvider:
 
     @staticmethod
     def hash_password(password: str): 
-        return SecurityProvider.pwd_context.hash(password)
+        # بنعمل Slice لأول 72 حرف عشان نتفادى الـ ValueError اللي ظهرت لك
+        return SecurityProvider.pwd_context.hash(password[:72])
 
     @staticmethod
     def verify_password(plain, hashed): 
-        return SecurityProvider.pwd_context.verify(plain, hashed)
-
+        # لازم برضه نعمل نفس الـ Slice هنا عشان المطابقة تتم صح
+        return SecurityProvider.pwd_context.verify(plain[:72], hashed)
+        
     @staticmethod
     def generate_token(data: dict):
         payload = data.copy()

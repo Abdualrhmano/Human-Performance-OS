@@ -72,20 +72,44 @@ class CoreBridge:
     DB_PATH = 'human_performance_v2.db'
     
     @staticmethod
-    def get_luna_verdict(score):
-        """تحليل الذكاء الاصطناعي بناءً على النتيجة الحالية"""
-        if score >= 80: return "أداء استثنائي. استمر في هذا المستوى من النشاط."
-        elif score >= 50: return "أداء مستقر. ركز على شرب الماء وتنظيم وقت الراحة."
-        else: return "تراجع ملحوظ. نظام LUNA ينصح بأخذ استراحة فورية وتقليل الجهد."
+    def get_luna_verdict(score, hr, steps):
+        """
+        تحليل LUNA المطور: يربط بين العداد (Score) والبيانات الحيوية (HR & Steps)
+        ليعطي إجابة تشخيصية دقيقة كما طلبت.
+        """
+        # 1. تحليل النبض (Heart Rate Analysis)
+        hr_advice = ""
+        if hr > 110:
+            hr_advice = "⚠️ تنبيه: معدل النبض مرتفع جداً؛ يرجى ممارسة تمارين التنفس."
+        elif hr < 50:
+            hr_advice = "💤 تنبيه: النبض منخفض؛ قد تكون في حالة إرشادية أو خمول."
+
+        # 2. تحليل النشاط (Activity Analysis)
+        activity_advice = "🏃 استمر في التحرك لكسر حالة الخمول." if steps < 3000 else "🌟 معدل نشاطك الحركي جيد جداً."
+
+        # 3. التشخيص النهائي بناءً على العداد (Performance Index)
+        if score >= 80:
+            status = "🔥 أداؤك في القمة! النظام في حالة تناغم كامل."
+        elif score >= 50:
+            status = "🟢 وضع مستقر. حافظ على روتينك الحالي مع شرب الماء."
+        else:
+            # هذا النص سيظهر عندما يكون العداد أحمر (مثل 46.6 في صورتك)
+            status = "🔴 تراجع ملحوظ في الأداء الحيوي. نظام LUNA يوصي بالراحة الآن."
+
+        # دمج كل الردود في رسالة ذكية واحدة تظهر في الـ Sidebar والـ Verdict Card
+        return f"{status}\n\n{hr_advice}\n{activity_advice}"
 
     @staticmethod
     def fetch_historical_data():
         try:
             conn = sqlite3.connect(CoreBridge.DB_PATH)
+            # جلب آخر 15 سجل لعرضها في الرسم البياني والجدول
             df = pd.read_sql_query("SELECT * FROM performance_logs ORDER BY timestamp DESC LIMIT 15", conn)
             conn.close()
             return df
-        except: return pd.DataFrame()
+        except: 
+            return pd.DataFrame()
+
 # ======================================================
 # SYSTEM: Human Performance OS v2.0 (PART 2)
 # MODULE: DASHBOARD RENDERER & LUNA AI VERDICT
@@ -146,13 +170,21 @@ st.markdown("<p style='text-align:center; color:#8b949e;'>Senior Engineer: Abdul
 # منطق المزامنة وتحديث الذكاء الاصطناعي
 if init_sync:
     with st.spinner("Processing Neural Signals..."):
-        # محاكاة حساب النتيجة وتوليد الرد
+        # 1. جلب البيانات الحيوية إذا كان وضع البلوتوث مفعلاً
         if input_mode and selected_address:
             hr_val = asyncio.run(BluetoothEngine.fetch_live_biometrics(selected_address))
         
-        # حساب النتيجة بناءً على المدخلات (محاكاة)
+        # 2. حساب نتيجة الأداء (المحاكاة)
         generated_score = round(random.uniform(30, 95), 1)
-        st.session_state.last_verdict = CoreBridge.get_luna_verdict(generated_score)
+        
+        # 3. استدعاء الدالة المحدثة بجميع المتغيرات المطلوبة (التعديل الأساسي)
+        st.session_state.last_verdict = CoreBridge.get_luna_verdict(
+            generated_score, 
+            hr_val, 
+            step_val
+        )
+        
+        # 4. تحديث الواجهة لعرض النتائج
         st.rerun()
 
 # --- التخطيط الرئيسي (العداد والرسم البياني) ---

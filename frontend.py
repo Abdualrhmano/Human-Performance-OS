@@ -17,7 +17,7 @@ from datetime import datetime
 class UIStyle:
     @staticmethod
     def apply():
-        st.set_page_config(page_title="LUNA OS v2.0", page_icon="🧠", layout="wide")
+        st.set_page_config(page_title="Human Performance OS v2.0", page_icon="🧠", layout="wide")
         st.markdown("""
             <style>
             @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=JetBrains+Mono&display=swap');

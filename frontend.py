@@ -1,6 +1,7 @@
 # ======================================================
 # SYSTEM: Human Performance OS v2.0
-# MODULE: STREAMLIT FRONTEND BRIDGE (UI/UX) - PRO VERSION
+# ARCHITECT: Abdulrahman (Lead Software Engineer)
+# MODULE: NEURAL & HARDWARE INTERFACE (FINAL PRO)
 # ======================================================
 
 import streamlit as st
@@ -10,221 +11,211 @@ import sqlite3
 import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime
+import asyncio
+from bleak import BleakClient, BleakScanner
 
 # ------------------------------------------------------
-# 1. CORE CONFIGURATION & PROFESSIONAL STYLING (هندسة الهوية البصرية)
+# 1. PROFESSIONAL UI CONFIGURATION (تنسيق الواجهة الاحترافية)
 # ------------------------------------------------------
-class UIStyle:
+class SystemUI:
     @staticmethod
-    def apply():
+    def setup():
         st.set_page_config(page_title="Human Performance OS v2.0", page_icon="🧠", layout="wide")
-        
-        # تأثيرات CSS متقدمة للـ Glassmorphism والهوية البصرية
         st.markdown("""
             <style>
-            @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=JetBrains+Mono&display=swap');
+            @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=JetBrains+Mono:wght@300;500&display=swap');
+            :root { --primary: #00ff88; --bg: #05070a; --card-bg: rgba(13, 17, 23, 0.9); }
             
-            html, body, [data-testid="stSidebar"] { font-family: 'JetBrains Mono', monospace; }
-            .stApp { background-color: #05070a; color: #e6edf3; }
+            html, body, [data-testid="stSidebar"] { font-family: 'JetBrains Mono', monospace; background-color: var(--bg); }
             
-            /* Glassmorphism Cards */
-            .metric-card {
-                background: rgba(13, 17, 23, 0.9);
-                border: 1px solid rgba(48, 54, 61, 0.7);
-                border-radius: 12px;
-                padding: 25px;
-                margin-bottom: 20px;
-                border-left: 4px solid #00ff88;
-                box-shadow: 0 4px 15px rgba(0,0,0,0.4);
-            }
-            
-            /* Professional Header */
-            .main-header {
-                background: linear-gradient(90deg, #00ff88, #00bd68);
-                -webkit-background-clip: text;
-                -webkit-text-fill-color: transparent;
+            .main-title {
                 font-family: 'Orbitron', sans-serif;
-                font-size: 3.5em;
-                font-weight: bold;
+                color: var(--primary);
+                text-shadow: 0 0 15px rgba(0, 255, 136, 0.4);
+                font-size: 3.2em;
                 text-align: center;
                 margin-bottom: 0px;
             }
             
-            /* AI Insight Box with Glow Effect */
-            .ai-box {
-                background: rgba(0, 255, 136, 0.03);
-                border: 1px solid rgba(0, 255, 136, 0.3);
-                padding: 20px;
+            .status-bar {
+                background: rgba(0, 255, 136, 0.05);
+                border: 1px solid rgba(0, 255, 136, 0.2);
                 border-radius: 10px;
-                color: #00ff88;
-                font-size: 1.1em;
-                line-height: 1.7;
-                box-shadow: 0 0 10px rgba(0, 255, 136, 0.1);
+                padding: 15px;
+                margin-bottom: 25px;
             }
             
-            /* Table Styling */
-            [data-testid="stTable"] { border-radius: 8px; border: 1px solid #30363d; overflow: hidden; }
+            .ai-insight-card {
+                background: linear-gradient(145deg, rgba(0,255,136,0.05), rgba(0,0,0,0.5));
+                border-left: 5px solid var(--primary);
+                padding: 25px;
+                border-radius: 12px;
+                box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            }
             </style>
         """, unsafe_allow_html=True)
 
-    @staticmethod
-    def get_performance_emoji(score):
-        """توليد رمز تعبيري متجاوب مع السكور"""
-        if score >= 80: return "🟢 (تحسن ملحوظ)"
-        if score >= 50: return "🟡 (أداء مستقر)"
-        return "🔴 (تراجع بحاجة لمعالجة)"
+# ------------------------------------------------------
+# 2. ADVANCED BLUETOOTH ENGINE (محرك البلوتوث المتقدم)
+# ------------------------------------------------------
+class BluetoothEngine:
+    # Standard Heart Rate Service UUID
+    HR_SERVICE_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
 
-# ------------------------------------------------------
-# 2. DATA ARCHITECT (إدارة البيانات المحلية - دون تغيير الملامح)
-# ------------------------------------------------------
-class DataVault:
     @staticmethod
-    def fetch_history():
-        """جلب البيانات التاريخية من قاعدة البيانات"""
+    async def scan_active_devices():
+        """البحث عن كافة الأجهزة المتاحة في النطاق"""
+        devices = await BleakScanner.discover()
+        return {d.name if d.name else f"Unknown ({d.address})": d.address for d in devices}
+
+    @staticmethod
+    async def fetch_live_biometrics(address):
+        """الاتصال بالجهاز المختار وجلب البيانات"""
         try:
-            conn = sqlite3.connect('human_performance_v2.db')
-            df = pd.read_sql_query("""
-                SELECT timestamp, performance_score, ai_recommendation 
-                FROM performance_logs ORDER BY timestamp DESC LIMIT 10
-            """, conn)
-            conn.close()
-            return df
-        except:
-            return pd.DataFrame()
-
-# ------------------------------------------------------
-# 3. BACKEND BRIDGE (الربط مع API السيادي - دون تغيير الملامح)
-# ------------------------------------------------------
-class BackendBridge:
-    # ملاحظة: هات الرابط من الـ Forwarded Ports في Codespaces واضيفه هنا
-    BASE_URL = "http://localhost:8000/api/v2" 
-
-    @staticmethod
-    def sync_data(token, metrics):
-        """إرسال البيانات للباك إند واستلام التحليل"""
-        headers = {
-            "Authorization": f"Bearer {token}",
-            "Content-Type": "application/json"
-        }
-        try:
-            response = requests.post(f"{BackendBridge.BASE_URL}/performance/sync", 
-                                     json=metrics, headers=headers)
-            return response.json() if response.status_code == 200 else None
-        except:
+            async with BleakClient(address, timeout=12.0) as client:
+                if await client.is_connected():
+                    raw_data = await client.read_gatt_char(BluetoothEngine.HR_SERVICE_UUID)
+                    return raw_data[1] # قراءة النبض اللحظي
+                return None
+        except Exception as e:
+            st.sidebar.error(f"Hardware Link Error: {str(e)}")
             return None
 
 # ------------------------------------------------------
-# 4. DASHBOARD RENDERER (بناء الواجهة الاحترافية)
+# 3. CORE SYSTEM BRIDGE (الربط البرمجي الشامل)
 # ------------------------------------------------------
-UIStyle.apply()
+class CoreBridge:
+    DB_PATH = 'human_performance_v2.db'
+    API_ENDPOINT = "http://localhost:8000/api/v2"
 
-# --- SIDEBAR: AUTH & INPUT (إدخال البيانات) ---
+    @staticmethod
+    def fetch_historical_data():
+        try:
+            conn = sqlite3.connect(CoreBridge.DB_PATH)
+            df = pd.read_sql_query("SELECT * FROM performance_logs ORDER BY timestamp DESC LIMIT 15", conn)
+            conn.close()
+            return df
+        except: return pd.DataFrame()
+
+    @staticmethod
+    def sync_neural_data(token, payload):
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+        try:
+            response = requests.post(f"{CoreBridge.API_ENDPOINT}/performance/sync", json=payload, headers=headers)
+            return response.json() if response.status_code == 200 else None
+        except: return None
+
+# ------------------------------------------------------
+# 4. SYSTEM RENDERER (تشغيل الواجهة النهائية)
+# ------------------------------------------------------
+SystemUI.setup()
+
+# --- Sidebar Control Center ---
 with st.sidebar:
-    st.markdown("<h1 style='color:#00ff88; font-family:Orbitron'>🛡️ AUTH</h1>", unsafe_allow_html=True)
-    access_token = st.text_input("ACCESS_TOKEN", type="password", help="ضع توكن الدخول هنا")
+    st.markdown("<h2 style='color:#00ff88; font-family:Orbitron;'>🔐 SECURITY</h2>", unsafe_allow_html=True)
+    auth_token = st.text_input("NEURAL ACCESS KEY", type="password", placeholder="Enter JWT...")
     
     st.divider()
-    st.markdown("<h1 style='color:#00ff88; font-family:Orbitron'>📡 SENSORS</h1>", unsafe_allow_html=True)
+    st.markdown("<h2 style='color:#00ff88; font-family:Orbitron;'>📡 TELEMETRY</h2>", unsafe_allow_html=True)
     
-    hr = st.slider("💓 Heart Rate (BPM)", 40, 160, 75)
-    steps = st.number_input("👟 Total Steps", value=8000, step=100)
-    screen = st.slider("📱 Screen Time (Hrs)", 0.0, 16.0, 4.0)
-    sleep = st.slider("🌙 Sleep Duration (Hrs)", 0.0, 12.0, 7.5)
+    input_mode = st.toggle("Live Bluetooth Mode", value=False)
     
-    st.markdown("<br>", unsafe_allow_html=True)
-    sync_btn = st.button("🚀 EXECUTE NEURAL SYNC", use_container_width=True)
+    selected_address = None
+    if input_mode:
+        if st.button("🔍 Scan for Active Devices"):
+            with st.spinner("Scanning BLE Frequencies..."):
+                st.session_state.ble_devices = asyncio.run(BluetoothEngine.scan_active_devices())
+        
+        if "ble_devices" in st.session_state and st.session_state.ble_devices:
+            dev_name = st.selectbox("Select Target Device:", options=list(st.session_state.ble_devices.keys()))
+            selected_address = st.session_state.ble_devices[dev_name]
+            st.success(f"Linked: {selected_address}")
+    
+    st.divider()
+    hr_val = st.slider("💓 Heart Rate (BPM)", 40, 190, 75)
+    step_val = st.number_input("👟 Daily Step Count", value=6000)
+    screen_val = st.slider("📱 Digital Exposure (H)", 0.0, 16.0, 5.0)
+    sleep_val = st.slider("🌙 Circadian Rest (H)", 0.0, 12.0, 7.5)
+    
+    init_sync = st.button("🚀 INITIATE SYSTEM SYNC", use_container_width=True)
 
-# --- MAIN PAGE: VISUALIZATION (عرض البيانات) ---
-st.markdown("<h1 class='main-header'>LUNA SOVEREIGN OS</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align:center; color:#8b949e'>Neural-Biometric Synchronization Protocol v2.0 | Entwickelt von Abdulrahman</p>", unsafe_allow_html=True)
+# --- Main Dashboard ---
+st.markdown("<h1 class='main-title'>Human Performance OS v2.0</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center; color:#8b949e;'>Neural-Biometric Command Center | Senior Engineer: Abdulrahman</p>", unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
 
-col_gauge, col_charts = st.columns([1, 2], gap="large")
-
-with col_gauge:
-    st.markdown("### 🧠 Live Analysis")
-    
-    if sync_btn:
-        if not access_token:
-            st.error("Missing Authentication Token")
-        else:
-            with st.spinner("Synchronizing with LUNA Neural Brain..."):
-                metrics = {
-                    "heart_rate": hr,
-                    "steps": steps,
-                    "screen_time": screen,
-                    "sleep_hours": sleep
-                }
-                result = BackendBridge.sync_data(access_token, metrics)
+if init_sync:
+    if not auth_token:
+        st.warning("⚠️ Authentication key missing. Neural sync aborted.")
+    else:
+        active_hr = hr_val
+        # ميزة البلوتوث الحية
+        if input_mode and selected_address:
+            with st.spinner(f"Establishing link with {selected_address}..."):
+                ble_hr = asyncio.run(BluetoothEngine.fetch_live_biometrics(selected_address))
+                if ble_hr: active_hr = ble_hr
+        
+        with st.spinner("Processing Biometric Data..."):
+            data_payload = {"heart_rate": active_hr, "steps": step_val, "screen_time": screen_val, "sleep_hours": sleep_val}
+            sync_result = CoreBridge.sync_neural_data(auth_token, data_payload)
+            
+            if sync_result:
+                st.toast("System Sync Complete", icon="✅")
                 
-                if result:
-                    # العداد الدائري الاحترافي والمطور (Custom Gauge)
-                    score = result['performance_score']
-                    emoji = UIStyle.get_performance_emoji(score)
-                    
-                    fig_gauge = go.Figure(go.Indicator(
+                col_g, col_i = st.columns([1, 1.5], gap="large")
+                
+                with col_g:
+                    # Gauge الاحترافي
+                    fig = go.Figure(go.Indicator(
                         mode = "gauge+number",
-                        value = score,
-                        title = {'text': f"PERFORMANCE INDEX<br>{emoji}", 'font': {'color': '#00ff88', 'size': 20}},
+                        value = sync_result['performance_score'],
+                        title = {'text': "PERFORMANCE INDEX", 'font': {'color': '#00ff88', 'family': 'Orbitron', 'size': 18}},
                         gauge = {
-                            'axis': {'range': [0, 100], 'tickwidth': 1, 'tickcolor': "#30363d"},
+                            'axis': {'range': [0, 100], 'tickcolor': "#00ff88"},
                             'bar': {'color': "#00ff88"},
                             'bgcolor': "rgba(0,0,0,0)",
-                            'borderwidth': 1,
-                            'bordercolor': "#30363d",
-                            'steps': [
-                                {'range': [0, 50], 'color': 'rgba(255, 0, 0, 0.05)'},
-                                {'range': [50, 80], 'color': 'rgba(255, 255, 0, 0.05)'},
-                                {'range': [80, 100], 'color': 'rgba(0, 255, 136, 0.05)'}
-                            ],
-                            'threshold': {
-                                'line': {'color': "#fff", 'width': 2},
-                                'thickness': 0.75,
-                                'value': score
-                            }
+                            'threshold': {'line': {'color': "white", 'width': 4}, 'value': sync_result['performance_score']}
                         }
                     ))
-                    fig_gauge.update_layout(height=350, paper_bgcolor='rgba(0,0,0,0)', font_color='white', margin=dict(l=20, r=20, t=50, b=0))
-                    st.plotly_chart(fig_gauge, use_container_width=True)
-                    
+                    fig.update_layout(height=350, paper_bgcolor='rgba(0,0,0,0)', font={'color': "white"})
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                with col_i:
                     st.markdown(f"""
-                        <div class="metric-card">
-                            <p style='color:#00ff88; font-weight:bold; font-size:1.2em; margin-bottom:10px;'>🤖 LUNA INTELLIGENCE VERDICT:</p>
-                            <div class="ai-box">{result['ai_insight']}</div>
+                        <div class="ai-insight-card">
+                            <h3 style="color:#00ff88; margin-top:0;">🤖 Neural Analysis Verdict</h3>
+                            <p style="font-size:1.2em; line-height:1.6;">{sync_result['ai_insight']}</p>
+                            <hr style="border: 0.5px solid rgba(0,255,136,0.2)">
+                            <p style="color:#8b949e; font-size:0.9em;">
+                                <b>Source:</b> {'Bluetooth Sensor' if input_mode else 'Manual Override'} | 
+                                <b>Telemetry:</b> HR {active_hr} BPM / Steps {step_val}
+                            </p>
                         </div>
                     """, unsafe_allow_html=True)
-                    st.toast("Sync Complete", icon="✅")
-                else:
-                    st.error("Sync Failed: Check API Status or Token")
-    else:
-        st.markdown("""
-            <div style='text-align: center; padding-top: 100px; opacity: 0.3;'>
-                <img src="https://cdn-icons-png.flaticon.com/512/2103/2103633.png" width="100">
-                <p style='font-size:1.2em; margin-top:20px'>AWAITING NEURAL UPLOAD</p>
-            </div>
-        """, unsafe_allow_html=True)
+            else:
+                st.error("Neural Sync Failed. Please verify Server status and Access Key.")
 
-with col_charts:
-    st.markdown("### 📊 Performance Timeline")
-    history_df = DataVault.fetch_history()
+# --- Analytics History ---
+st.divider()
+st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>📊 Performance History</h3>", unsafe_allow_html=True)
+history_df = CoreBridge.fetch_historical_data()
+
+if not history_df.empty:
+    # الرسم البياني المطور (Area Chart)
+    fig_hist = px.area(history_df, x='timestamp', y='performance_score')
+    fig_hist.update_traces(line_color='#00ff88', fillcolor='rgba(0, 255, 136, 0.1)', line_width=4)
+    fig_hist.update_layout(
+        paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
+        xaxis=dict(showgrid=False, color="#8b949e"),
+        yaxis=dict(showgrid=True, gridcolor="#161b22", color="#8b949e"),
+        height=350, margin=dict(l=0, r=0, t=20, b=0)
+    )
+    st.plotly_chart(fig_hist, use_container_width=True)
     
-    if not history_df.empty:
-        # رسم بياني احترافي مطور (Professional Line Chart)
-        fig = px.line(history_df, x='timestamp', y='performance_score', markers=True, title="Score Evolution over Time")
-        fig.update_traces(line_color='#00ff88', line_width=4, marker=dict(size=10, color='#fff'))
-        fig.update_layout(
-            paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)',
-            font_color='#8b949e', xaxis_showgrid=False, yaxis_showgrid=True,
-            yaxis=dict(gridcolor='#161b22', title="Score (0-100)"), xaxis=dict(title="Timestamp"),
-            margin=dict(l=0, r=0, t=50, b=0)
-        )
-        st.plotly_chart(fig, use_container_width=True)
-        
-        st.markdown("### 📜 System Logs (Recent 5 Entries)")
-        # عرض الجدول بشكل أنيق ومفرز
-        st.table(history_df.head(5))
-    else:
-        st.info("System Standby: Connect to human_performance_v2.db to view historical biometric data.")
+    with st.expander("View Raw Logs"):
+        st.dataframe(history_df, use_container_width=True)
+else:
+    st.info("System Standby: Connect to human_performance_v2.db to initialize historical tracking.")
 
-st.markdown("<div style='text-align:center; margin-top:60px; color:#30363d; font-size:0.8em;'>LUNA CORE v2.0 | SECURE BIOMETRIC GATEWAY | DEVELOPED BY ABDULRAHMAN</div>", unsafe_allow_html=True)
+st.markdown(f"<div style='text-align:center; margin-top:50px; color:#30363d;'>HUMAN PERFORMANCE OS v2.0 | SECURE BIOMETRIC GATEWAY | {datetime.now().year}</div>", unsafe_allow_html=True)

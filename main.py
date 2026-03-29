@@ -16,8 +16,9 @@ from cryptography.fernet import Fernet
 from pydantic import BaseModel, Field
 from fastapi import FastAPI, Depends, Header, HTTPException
 from fastapi.security import OAuth2PasswordBearer
-from fastapi.middleware.cors import CORSMiddleware  # حجر الزاوية للربط بالفرانت إند
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm
+import hashlib
 
 # --- 1. CENTRAL CONFIGURATION ---
 class SystemConfig:
@@ -28,25 +29,24 @@ class SystemConfig:
     ALGORITHM = "HS256"
     TOKEN_EXPIRY_HOURS = 24
     
-    # تحويل مفتاحك الخاص لصيغة تشفير Fernet للبيانات الحساسة
     _padded_key = SECRET_KEY.ljust(32)[:32]
     FERNET_KEY = base64.urlsafe_b64encode(_padded_key)
     cipher_suite = Fernet(FERNET_KEY)
 
 # --- 2. SECURITY PROVIDER ---
 class SecurityProvider:
-    """محرك الحماية والمصادقة"""
-    pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
+    """محرك حماية مستقر تماماً لبيئات الـ Cloud"""
+    
+    @staticmethod
+    def hash_password(password: str):
+        # استخدام hashlib لضمان الاستقرار في بيئة Codespaces
+        salt = str(SystemConfig.SECRET_KEY)
+        db_password = password + salt
+        return hashlib.sha256(db_password.encode()).hexdigest()
 
     @staticmethod
-    def hash_password(password: str): 
-        # بنعمل Slice لأول 72 حرف عشان نتفادى الـ ValueError اللي ظهرت لك
-        return SecurityProvider.pwd_context.hash(password[:72])
-
-    @staticmethod
-    def verify_password(plain, hashed): 
-        # لازم برضه نعمل نفس الـ Slice هنا عشان المطابقة تتم صح
-        return SecurityProvider.pwd_context.verify(plain[:72], hashed)
+    def verify_password(plain, hashed):
+        return SecurityProvider.hash_password(plain) == hashed
         
     @staticmethod
     def generate_token(data: dict):
@@ -54,25 +54,22 @@ class SecurityProvider:
         payload.update({"exp": datetime.utcnow() + timedelta(hours=SystemConfig.TOKEN_EXPIRY_HOURS)})
         return jwt.encode(payload, SystemConfig.SECRET_KEY, algorithm=SystemConfig.ALGORITHM)
 
-# --- 3. DATA SCHEMAS (للتعامل مع الفرانت إند) ---
+# --- 3. DATA SCHEMAS ---
 class UserAuthSchema(BaseModel):
     username: str
     password: str
 
 class DeviceMetricsSchema(BaseModel):
-    """النموذج الذي سيرسله الفرانت إند من الحساسات"""
     heart_rate: int = Field(..., example=75)
     steps: int = Field(..., example=8000)
     screen_time: float = Field(..., example=3.2)
     sleep_hours: float = Field(..., example=7.5)
+
 # ======================================================
-# SYSTEM: Human Performance OS v2.0
 # MODULE 2: NEURAL ENGINES & DATABASE
 # ======================================================
 
-# --- 1. DATABASE ARCHITECT (مخزن الذاكرة) ---
 class DatabaseManager:
-    """إدارة قاعدة البيانات لضمان استقرار سجلات الأداء"""
     def __init__(self, db_name="human_performance_v2.db"):
         self.db_name = db_name
         self._create_tables()
@@ -80,12 +77,10 @@ class DatabaseManager:
     def _create_tables(self):
         with sqlite3.connect(self.db_name) as conn:
             c = conn.cursor()
-            # جدول المستخدمين
             c.execute('''CREATE TABLE IF NOT EXISTS users 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                           username TEXT UNIQUE, 
                           password_hash TEXT)''')
-            # جدول الأداء التاريخي
             c.execute('''CREATE TABLE IF NOT EXISTS performance_logs 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                           user_id INTEGER, 
@@ -98,222 +93,114 @@ class DatabaseManager:
                           timestamp DATETIME)''')
             conn.commit()
 
-# --- 2. NEURAL PROCESSOR (محرك حساب السكور) ---
 class NeuralProcessor:
-    """الخوارزمية التي تدمج بيانات الساعة والموبايل"""
     @staticmethod
     def calculate_score(m: DeviceMetricsSchema):
-        # 40% حركة، 30% نوم، 30% استقرار قلب، مع خصم لوقت الشاشة
         step_score = min((m.steps / 10000) * 40, 40)
         sleep_score = min((m.sleep_hours / 8) * 30, 30)
         hr_score = 30 if 60 <= m.heart_rate <= 100 else 15
-        screen_penalty = max(0, (m.screen_time - 4) * 5) # خصم 5 نقاط لكل ساعة شاشة إضافية
-        
+        screen_penalty = max(0, (m.screen_time - 4) * 5)
         final = (step_score + sleep_score + hr_score) - screen_penalty
         return round(max(0, min(final, 100)), 2)
 
-# --- 3. LUNA NEURAL BRAIN (الاتصال بـ Gemini) ---
 class LunaNeuralBrain:
-    """المحرك الذكي: يربط Gemini بذاكرة أداء المستخدم لتقديم تحليل سيادي"""
-    
     def __init__(self, api_key: str):
-        # إعداد الاتصال بجوجل باستخدام مفتاح الـ API الخاص بـ Gemini
         genai.configure(api_key=api_key)
         self.model = genai.GenerativeModel('gemini-1.5-flash')
 
     def get_history(self, db_conn, user_id: int):
-        """سحب آخر 3 سجلات من قاعدة البيانات ليعرف الذكاء الاصطناعي سياق الأداء"""
         cursor = db_conn.cursor()
-        cursor.execute("""
-            SELECT performance_score, timestamp 
-            FROM performance_logs 
-            WHERE user_id = ? 
-            ORDER BY timestamp DESC LIMIT 3
-        """, (user_id,))
+        cursor.execute("SELECT performance_score, timestamp FROM performance_logs WHERE user_id = ? ORDER BY timestamp DESC LIMIT 3", (user_id,))
         rows = cursor.fetchall()
-        
-        if not rows: 
-            return "لا يوجد سجلات سابقة للمقارنة."
-        
-        return "سجلات الأداء السابقة: " + ", ".join([f"سكور {r[0]} في {r[1]}" for r in rows])
+        if not rows: return "لا يوجد سجلات سابقة."
+        return "السجلات السابقة: " + ", ".join([f"سكور {r[0]} في {r[1]}" for r in rows])
 
     def generate_insight(self, metrics: dict, history: str):
-        """توليد تحليل ذكي ونصيحة Biohacking باللغة العربية الفصحى"""
-        
-        # البرومبت المحدث لضمان لغة عربية احترافية تتناسب مع نظام سيادي
-        prompt = f"""
-        بصفتك العقل المدبر لنظام {SystemConfig.OS_NAME}. 
-        البيانات الحيوية الحالية: {metrics}. 
-        سياق التاريخ السابق: {history}. 
-        
-        المطلوب: 
-        1. تقديم تحليل تقني سريع للأداء الحالي (هل هو تحسن أم تراجع؟).
-        2. إعطاء نصيحة 'Biohacking' محددة لرفع الكفاءة العصبية والتركيز.
-        
-        الشروط:
-        - الرد يجب أن يكون في جملتين فقط.
-        - اللغة المستخدمة هي العربية الفصحى بأسلوب تقني راقٍ.
-        """
-        
+        prompt = f"بصفتك العقل المدبر لنظام {SystemConfig.OS_NAME}. البيانات: {metrics}. التاريخ: {history}. قدم نصيحة Biohacking في جملتين بالعربية الفصحى."
         try:
             response = self.model.generate_content(prompt)
             return response.text.strip()
-        except Exception: 
-            # رد احتياطي ذكي في حال فشل الاتصال بالسيرفر
-            return "نظام LUNA: حافظ على استقرار نشاطك الحيوي الآن لتحقيق أقصى كفاءة عصبية لاحقاً."
-
+        except:
+            return "نظام LUNA: حافظ على استقرار نشاطك الحيوي حالياً."
 
 class PerformanceAdvisor:
-    """المسؤول عن دمج العقل والذاكرة"""
     def __init__(self, brain: LunaNeuralBrain):
         self.brain = brain
-        
     def get_verdict(self, db_conn, user_id, metrics):
         history_text = self.brain.get_history(db_conn, user_id)
         return self.brain.generate_insight(metrics, history_text)
+
 # ======================================================
-# SYSTEM: Human Performance OS v2.0
-# MODULE 3: MASTER API & FRONTEND BRIDGE (CORS)
+# MODULE 3: MASTER API & FRONTEND BRIDGE
 # ======================================================
 
-# --- 1. INITIALIZATION (تشغيل المحركات المركزية) ---
-app = FastAPI(
-    title=SystemConfig.OS_NAME,
-    description="The Pulse of Human Performance OS",
-    version="2.0.0"
-)
+app = FastAPI(title=SystemConfig.OS_NAME, version="2.0.0")
 
-# --- 2. CORS CONFIGURATION (جسر الربط بالفرانت إند) ---
-# دي أهم خطوة عشان الكود يشتغل مع React/Vue/Flutter
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # يسمح بالاتصال من أي مصدر (موبايل/ويب)
+    allow_origins=["*"],
     allow_credentials=True,
-    allow_methods=["*"], # يسمح بكل أنواع الطلبات (GET, POST, etc.)
-    allow_headers=["*"], # يسمح بكل أنواع الـ Headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# --- 3. DEPENDENCIES (تعريف الأدوات المساعدة) ---
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v2/auth/login")
 db_manager = DatabaseManager()
 security = SecurityProvider()
 brain = LunaNeuralBrain(api_key=SystemConfig.GEMINI_API_KEY)
 advisor = PerformanceAdvisor(brain)
 
-# --- 4. AUTHENTICATION (بوابة الدخول) ---
+# ======================================================
+# MODULE 4: ENDPOINTS & DEPLOYMENT
+# ======================================================
+
 @app.post("/api/v2/auth/register", tags=["Security"])
 async def register(user: UserAuthSchema):
-    """تسجيل مستخدم جديد في النظام السيادي"""
     with sqlite3.connect(db_manager.db_name) as conn:
         cursor = conn.cursor()
         try:
             hashed = security.hash_password(user.password)
-            cursor.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", 
-                           (user.username, hashed))
+            cursor.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", (user.username, hashed))
             conn.commit()
             return {"status": "success", "message": "Enrolled in OS v2.0"}
         except sqlite3.IntegrityError:
             raise HTTPException(status_code=400, detail="User already exists")
 
 @app.post("/api/v2/auth/login", tags=["Security"])
-async def login(user: UserAuthSchema):
-    """توليد توكن الدخول للفرانت إند"""
+async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     with sqlite3.connect(db_manager.db_name) as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT id, password_hash FROM users WHERE username = ?", (user.username,))
+        cursor.execute("SELECT id, password_hash FROM users WHERE username = ?", (form_data.username,))
         record = cursor.fetchone()
-        
-        if not record or not security.verify_password(user.password, record[1]):
+        if not record or not security.verify_password(form_data.password, record[1]):
             raise HTTPException(status_code=401, detail="Invalid Credentials")
         
-        # إنشاء التوكن اللي الفرانت إند هيخزنه عنده
-        token = security.generate_token(data={"sub": user.username, "user_id": record[0]})
-        return {
-            "access_token": token, 
-            "token_type": "bearer",
-            "username": user.username
-        }
-# ======================================================
-# SYSTEM: Human Performance OS v2.0
-# MODULE 4: MASTER SYNC & SERVER DEPLOYMENT
-# ======================================================
+        token = security.generate_token(data={"sub": form_data.username, "user_id": record[0]})
+        return {"access_token": token, "token_type": "bearer"}
 
-# --- 1. THE NEURAL SYNC (مزامنة الأجهزة + الذكاء الاصطناعي) ---
 @app.post("/api/v2/performance/sync", tags=["Neural Sync"])
-async def sync_and_analyze(
-    data: DeviceMetricsSchema, 
-    token: str = Depends(oauth2_scheme)
-):
-    """
-    نقطة المزامنة العصبية: تستقبل البيانات، تستشير Gemini، 
-    وتؤمن السجلات في قاعدة البيانات المشفرة.
-    """
-    
-    # أ. فك تشفير التوكن والتحقق من الهوية (Identity Shield)
+async def sync_and_analyze(data: DeviceMetricsSchema, token: str = Depends(oauth2_scheme)):
     try:
         payload = jwt.decode(token, SystemConfig.SECRET_KEY, algorithms=[SystemConfig.ALGORITHM])
         user_id = payload.get("user_id")
-        username = payload.get("sub")
-        
-        if not user_id:
-            raise HTTPException(status_code=403, detail="Unauthorized: User ID missing")
-            
-    except jwt.PyJWTError:
-        raise HTTPException(status_code=403, detail="Session Expired or Compromised")
+    except:
+        raise HTTPException(status_code=403, detail="Invalid or Expired Session")
 
-    # ب. معالجة السكور (Neural Computing Unit)
-    # بنستخدم الـ Processor اللي أنت صممته لحساب الأداء
     performance_score = NeuralProcessor.calculate_score(data)
     
-    # ج. استشارة العقل (LUNA Neural Brain) والتخزين
-    try:
-        with sqlite3.connect(db_manager.db_name) as conn:
-            current_metrics = {
-                "hr": data.heart_rate, 
-                "steps": data.steps, 
-                "screen_time": data.screen_time, 
-                "sleep": data.sleep_hours, 
-                "score": performance_score
-            }
-            
-            # محاولة جلب النصيحة من Gemini (مع معالجة الأخطاء)
-            try:
-                ai_insight = advisor.get_verdict(conn, user_id, current_metrics)
-            except Exception as ai_err:
-                print(f"AI Brain Error: {ai_err}")
-                ai_insight = "LUNA is recalibrating. Maintain current focus levels."
+    with sqlite3.connect(db_manager.db_name) as conn:
+        current_metrics = {"hr": data.heart_rate, "steps": data.steps, "sleep": data.sleep_hours, "score": performance_score}
+        ai_insight = advisor.get_verdict(conn, user_id, current_metrics)
+        
+        cursor = conn.cursor()
+        cursor.execute("""INSERT INTO performance_logs 
+            (user_id, heart_rate, steps, screen_time, sleep_hours, performance_score, ai_recommendation, timestamp)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)""", 
+            (user_id, data.heart_rate, data.steps, data.screen_time, data.sleep_hours, performance_score, ai_insight, datetime.now()))
+        conn.commit()
 
-            # د. الحفظ النهائي في قاعدة البيانات (Persistence Layer)
-            cursor = conn.cursor()
-            cursor.execute("""
-                INSERT INTO performance_logs 
-                (user_id, heart_rate, steps, screen_time, sleep_hours, 
-                 performance_score, ai_recommendation, timestamp)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """, (user_id, data.heart_rate, data.steps, data.screen_time, data.sleep_hours, 
-                  performance_score, ai_insight, datetime.now().isoformat()))
-            conn.commit()
+    return {"status": "success", "performance_score": performance_score, "ai_insight": ai_insight}
 
-    except sqlite3.Error as db_err:
-        print(f"Database Error: {db_err}")
-        raise HTTPException(status_code=500, detail="Data Persistence Failure")
-
-    # هـ. الرد النهائي للواجهة (JSON Insight Response)
-    return {
-        "status": "synchronized",
-        "user_identity": username,
-        "performance_score": round(performance_score, 2),
-        "ai_insight": ai_insight,
-        "metrics_summary": {
-            "is_optimal": performance_score > 75,
-            "system_state": "Operational",
-            "biometric_alert": "Nominal" if data.heart_rate < 100 else "Elevated"
-        },
-        "sync_token": datetime.now().strftime("%Y%m%d%H%M%S")
-    }
-
-# --- 2. SERVER ENTRY POINT (نقطة انطلاق النظام) ---
 if __name__ == "__main__":
-    # تشغيل السيرفر على جميع الواجهات للوصول إليه من الموبايل أو الويب
     print(f"🚀 {SystemConfig.OS_NAME} is waking up...")
     uvicorn.run(app, host="0.0.0.0", port=8000)

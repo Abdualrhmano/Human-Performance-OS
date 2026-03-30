@@ -14,6 +14,45 @@ import asyncio
 import random
 from bleak import BleakClient, BleakScanner
 
+from snowflake.cortex import complete
+import textwrap
+
+class LUNAChat:
+    def __init__(self, model="claude-3-5-sonnet"):
+        self.model = model
+
+    def get_response(self, prompt, history):
+        try:
+            session = st.connection("snowflake").session()
+            full_prompt = f"System: You are LUNA AI, the neural core of the Human Performance OS. Answer Senior Engineer Abdulrahman briefly and professionally.\n"
+            for msg in history[-5:]:
+                full_prompt += f"{msg['role']}: {msg['content']}\n"
+            full_prompt += f"User: {prompt}"
+            return complete(self.model, full_prompt, stream=True, session=session)
+        except Exception as e:
+            return f"Neural Link Error: {str(e)}"
+
+    def render_ui(self):
+        st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>🤖 Neural Chat Link</h3>", unsafe_allow_html=True)
+        if "messages" not in st.session_state:
+            st.session_state.messages = []
+
+        chat_container = st.container(height=400)
+        with chat_container:
+            for message in st.session_state.messages:
+                with st.chat_message(message["role"]):
+                    st.markdown(message["content"])
+
+        if prompt := st.chat_input("Send command to LUNA OS..."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with chat_container:
+                with st.chat_message("user"):
+                    st.markdown(prompt)
+                with st.chat_message("assistant"):
+                    response_gen = self.get_response(prompt, st.session_state.messages)
+                    full_response = st.write_stream(response_gen)
+                    st.session_state.messages.append({"role": "assistant", "content": full_response})
+
 # 1. PROFESSIONAL UI CONFIGURATION
 class SystemUI:
     @staticmethod
@@ -162,42 +201,75 @@ if init_sync:
         st.session_state.last_verdict = CoreBridge.get_luna_verdict(generated_score, hr_val, step_val)
         CoreBridge.save_log(generated_score, hr_val, step_val)
         st.rerun()
-# ======================================================
-# SYSTEM: Human Performance OS v2.0 (PART 2)
-# MODULE: DASHBOARD RENDERER & GRAPHICS ENGINE
-# ======================================================
-
-# --- 1. MAIN DASHBOARD AREA ---
+        
+# --- 1. MAIN DASHBOARD AREA & TABS CONFIGURATION ---
 st.markdown("<h1 class='main-title'>Human Performance OS v2.0</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align:center; color:#8b949e; margin-bottom:30px;'>Senior Engineer: Abdulrahman | Neural-Biometric Protocol Active</p>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center; color:#8b949e; margin-bottom:10px;'>Senior Engineer: Abdulrahman | Neural-Biometric Protocol Active</p>", unsafe_allow_html=True)
 
-# تقسيم الشاشة لعرض العداد والتحليل
-col_left, col_right = st.columns([1, 1.5], gap="large")
+# إضافة نظام التبويبات لدمج الـ Dashboard والشات
+tab_metrics, tab_ai = st.tabs(["📊 SYSTEM METRICS", "🤖 NEURAL CHAT LINK"])
 
-with col_left:
-    st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>🧠 Live Analysis</h3>", unsafe_allow_html=True)
-    
-    # جلب النتيجة الحالية من الـ Session
-    display_score = st.session_state.get('current_score', 46.6)
-    
-    # تصميم العداد (Gauge) الاحترافي
-    fig_gauge = go.Figure(go.Indicator(
-        mode = "gauge+number",
-        value = display_score,
-        number = {'font': {'color': 'white', 'family': 'Orbitron'}},
-        gauge = {
-            'axis': {'range': [0, 100], 'tickcolor': "#00ff88"},
-            'bar': {'color': "#00ff88"},
-            'bgcolor': "rgba(0,0,0,0)",
-            'threshold': {
-                'line': {'color': "red", 'width': 4},
-                'thickness': 0.75,
-                'value': display_score
+with tab_metrics:
+    # تقسيم الشاشة لعرض العداد والتحليل (نفس كودك الأصلي)
+    col_left, col_right = st.columns([1, 1.5], gap="large")
+
+    with col_left:
+        st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>🧠 Live Analysis</h3>", unsafe_allow_html=True)
+        
+        display_score = st.session_state.get('current_score', 46.6)
+        
+        fig_gauge = go.Figure(go.Indicator(
+            mode = "gauge+number",
+            value = display_score,
+            number = {'font': {'color': 'white', 'family': 'Orbitron'}},
+            gauge = {
+                'axis': {'range': [0, 100], 'tickcolor': "#00ff88"},
+                'bar': {'color': "#00ff88"},
+                'bgcolor': "rgba(0,0,0,0)",
+                'threshold': {
+                    'line': {'color': "red", 'width': 4},
+                    'thickness': 0.75,
+                    'value': display_score
+                }
             }
-        }
-    ))
-    fig_gauge.update_layout(height=300, paper_bgcolor='rgba(0,0,0,0)', font={'color': "white"})
-    st.plotly_chart(fig_gauge, use_container_width=True)
+        ))
+        fig_gauge.update_layout(height=300, paper_bgcolor='rgba(0,0,0,0)', font={'color': "white"})
+        st.plotly_chart(fig_gauge, use_container_width=True)
+        
+        if display_score < 50:
+            st.markdown("<p style='text-align:center; color:#ff4b4b; font-weight:bold;'>🔴 CRITICAL: تراجع في الأداء الحيوي</p>", unsafe_allow_html=True)
+        else:
+            st.markdown("<p style='text-align:center; color:#00ff88; font-weight:bold;'>🟢 OPTIMAL: حالة النظام مستقرة</p>", unsafe_allow_html=True)
+
+    with col_right:
+        st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>📈 Performance Timeline</h3>", unsafe_allow_html=True)
+        
+        hist_df = CoreBridge.fetch_historical_data()
+        
+        if not hist_df.empty:
+            fig_line = px.area(hist_df.iloc[::-1], x='timestamp', y='performance_score')
+            fig_line.update_traces(
+                line_color='#00ff88', 
+                fillcolor='rgba(0, 255, 136, 0.1)', 
+                markers=True,
+                line_width=3
+            )
+            fig_line.update_layout(
+                paper_bgcolor='rgba(0,0,0,0)', 
+                plot_bgcolor='rgba(0,0,0,0)', 
+                height=350,
+                xaxis=dict(showgrid=True, gridcolor='#1f2937', title="Time Protocol"),
+                yaxis=dict(showgrid=True, gridcolor='#1f2937', title="Score"),
+                font={'color': "white"}
+            )
+            st.plotly_chart(fig_line, use_container_width=True)
+        else:
+            st.info("No telemetry logs found. Initiate Sync to populate data.")
+
+with tab_ai:
+    # استدعاء كلاس الدردشة (تأكد أنك وضعت تعريف الكلاس في أول الملف)
+    luna_chat = LUNAChat()
+    luna_chat.render_ui()
     
     # رسالة حالة العداد (تحت العداد مباشرة)
     if display_score < 50:

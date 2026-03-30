@@ -1,9 +1,3 @@
-# ======================================================
-# SYSTEM: Human Performance OS v2.0 (INTEGRATED)
-# ARCHITECT: Abdulrahman (Lead Software Engineer)
-# MODULE: LUNA CORE & BIOMETRIC GATEWAY
-# ======================================================
-
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -44,7 +38,7 @@ class LUNAChat:
                     st.markdown(message["content"])
 
         # 2. استقبال المدخلات (Chat Input)
-        if prompt := st.chat_input("Send command to LUNA..."):
+        if prompt := st.chat_input("Send command to LUNA...", key="luna_chat_input_unique"):
             # عرض رسالة المستخدم فوراً
             st.session_state.messages.append({"role": "user", "content": prompt})
             with chat_container:
@@ -303,7 +297,7 @@ with st.sidebar:
     st.divider()
     st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>📡 TELEMETRY</h3>", unsafe_allow_html=True)
     
-    hr_val = st.slider("💓 Heart Rate (BPM)", 40, 190, 75)
+    hr_val = st.slider("💓 Heart Rate (BPM)", 40, 190, 75, key="unique_heart_rate_slider")
     step_val = st.number_input("👟 Daily Step Count", value=6000)
     
     init_sync = st.button("🚀 INITIATE SYSTEM SYNC")

@@ -1,7 +1,7 @@
 # ======================================================
-# SYSTEM: LUNA SOVEREIGN OS v10.0 (INTEGRATED)
+# SYSTEM: Human Performance OS v2.0 (INTEGRATED)
 # ARCHITECT: Abdulrahman (Lead Software Engineer)
-# MODULE: BIOMETRIC GATEWAY & NEURAL AI ASSISTANT
+# MODULE: LUNA CORE & BIOMETRIC GATEWAY
 # ======================================================
 
 import streamlit as st
@@ -12,15 +12,7 @@ import plotly.express as px
 from datetime import datetime
 import asyncio
 import random
-import textwrap
-from concurrent.futures import ThreadPoolExecutor
-
-# محاولة استيراد مكتبات Snowflake Cortex
-try:
-    from snowflake.core import Root
-    from snowflake.cortex import complete
-except ImportError:
-    pass
+from bleak import BleakClient, BleakScanner
 
 # 1. PROFESSIONAL UI CONFIGURATION
 class SystemUI:
@@ -38,13 +30,16 @@ class SystemUI:
                 --accent-red: #ff4b4b;
             }
 
+            /* إعدادات الخلفية العامة والخطوط */
             .stApp { background-color: var(--bg); color: #e6edf3; font-family: 'JetBrains Mono', monospace; }
             
+            /* تصميم القائمة الجانبية (Sidebar) مطابق للصورة */
             section[data-testid="stSidebar"] {
                 background-color: var(--sidebar-bg) !important;
                 border-right: 1px solid #30363d;
             }
 
+            /* العنوان الرئيسي المتوهج */
             .main-title { 
                 font-family: 'Orbitron', sans-serif; 
                 color: var(--primary); 
@@ -54,22 +49,20 @@ class SystemUI:
                 margin-bottom: 5px; 
             }
 
-            /* تخصيص التبويبات Tabs لتناسب التصميم */
-            .stTabs [data-baseweb="tab-list"] { gap: 10px; }
-            .stTabs [data-baseweb="tab"] {
-                background-color: #161b22;
-                border: 1px solid #30363d;
-                border-radius: 8px 8px 0 0;
-                padding: 10px 20px;
-                color: #8b949e;
-            }
-            .stTabs [aria-selected="true"] {
-                color: var(--primary) !important;
-                border-color: var(--primary) !important;
-            }
-
+            /* تخصيص السلايدرز للون الأحمر */
             .stSlider [data-baseweb="slider"] div { background-color: var(--accent-red) !important; }
             
+            /* بطاقة LUNA AI Verdict */
+            .luna-card {
+                background: rgba(0, 255, 136, 0.05);
+                border: 1px solid var(--primary);
+                border-left: 6px solid var(--primary);
+                padding: 20px;
+                border-radius: 12px;
+                box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+            }
+            
+            /* تصميم الأزرار التقني */
             .stButton > button {
                 background-color: #21262d !important;
                 color: white !important;
@@ -77,19 +70,19 @@ class SystemUI:
                 border-radius: 8px !important;
                 font-family: 'Orbitron', sans-serif !important;
                 transition: 0.3s ease;
+                width: 100%;
             }
             .stButton > button:hover {
                 border-color: var(--primary) !important;
                 color: var(--primary) !important;
+                box-shadow: 0 0 15px rgba(0, 255, 136, 0.2);
             }
             </style>
         """, unsafe_allow_html=True)
 
-# 2. CORE SYSTEM & AI BRIDGE
+# 2. CORE SYSTEM BRIDGE
 class CoreBridge:
     DB_PATH = 'human_performance_v2.db'
-    MODEL = "claude-3-5-sonnet"
-    EXECUTOR = ThreadPoolExecutor(max_workers=5)
     
     @staticmethod
     def init_db():
@@ -100,23 +93,39 @@ class CoreBridge:
         conn.close()
 
     @staticmethod
-    def get_snowflake_session():
-        try: return st.connection("snowflake").session()
-        except: return None
+    def save_log(score, hr, steps):
+        conn = sqlite3.connect(CoreBridge.DB_PATH)
+        conn.execute("INSERT INTO performance_logs (timestamp, performance_score, hr, steps) VALUES (?, ?, ?, ?)",
+                       (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), score, hr, steps))
+        conn.commit()
+        conn.close()
 
     @staticmethod
     def get_luna_verdict(score, hr, steps):
+        hr_advice = "🟢 نبض مستقر"
+        if hr > 110: hr_advice = "⚠️ تنبيه: معدل النبض مرتفع جداً؛ يرجى ممارسة تمارين التنفس."
+        elif hr < 50: hr_advice = "💤 تنبيه: النبض منخفض؛ قد تكون في حالة إرشادية أو خمول."
+
+        activity_advice = "🏃 استمر في التحرك لكسر حالة الخمول." if steps < 3000 else "🌟 معدل نشاطك الحركي جيد جداً."
+
         if score >= 80: status = "🔥 أداؤك في القمة! النظام في حالة تناغم كامل."
-        elif score >= 50: status = "🟢 وضع مستقر. حافظ على روتينك الحالي."
-        else: status = "🔴 تراجع ملحوظ في الأداء الحيوي."
-        return f"{status}\n\nالنبض: {hr} BPM | الخطوات: {steps}"
+        elif score >= 50: status = "🟢 وضع مستقر. حافظ على روتينك الحالي مع شرب الماء."
+        else: status = "🔴 تراجع ملحوظ في الأداء الحيوي. نظام LUNA يوصي بالراحة الآن."
+
+        return f"{status}\n\n{hr_advice}\n{activity_advice}"
+
+    @staticmethod
+    def fetch_historical_data():
+        try:
+            conn = sqlite3.connect(CoreBridge.DB_PATH)
+            df = pd.read_sql_query("SELECT * FROM performance_logs ORDER BY timestamp DESC LIMIT 15", conn)
+            conn.close()
+            return df
+        except: return pd.DataFrame()
 
 # 3. INITIALIZATION
 SystemUI.setup()
 CoreBridge.init_db()
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
 
 # --- SIDEBAR CONTROL CENTER ---
 with st.sidebar:
@@ -124,83 +133,126 @@ with st.sidebar:
     auth_token = st.text_input("NEURAL ACCESS KEY", type="password", value="A7-X9-RAG-CORE-V10")
     
     st.divider()
+    st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>🤖 AI VERDICT</h3>", unsafe_allow_html=True)
+    
+    # استرجاع البيانات السابقة من الـ Session
+    luna_msg = st.session_state.get('last_verdict', "في انتظار مزامنة البيانات للتحليل...")
+    current_score = st.session_state.get('current_score', 0.0)
+    
+    st.markdown(f"""
+        <div style="background: rgba(0,255,136,0.1); border: 1px solid #00ff88; padding: 15px; border-radius: 10px; border-left: 5px solid #00ff88;">
+            <p style="color:#00ff88; font-weight:bold; margin-bottom:5px;">LUNA Intelligence:</p>
+            <p style="font-size:0.95em; color:white;">{luna_msg}</p>
+        </div>
+    """, unsafe_allow_html=True)
+    
+    st.divider()
     st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>📡 TELEMETRY</h3>", unsafe_allow_html=True)
-    hr_val = st.slider("💓 Heart Rate", 40, 190, 75)
-    step_val = st.number_input("👟 Daily Steps", value=6000)
+    
+    hr_val = st.slider("💓 Heart Rate (BPM)", 40, 190, 75)
+    step_val = st.number_input("👟 Daily Step Count", value=6000)
+    
     init_sync = st.button("🚀 INITIATE SYSTEM SYNC")
 
-    if init_sync:
-        with st.spinner("Processing..."):
-            score = round(random.uniform(30, 95), 1)
-            st.session_state.current_score = score
-            st.session_state.last_verdict = CoreBridge.get_luna_verdict(score, hr_val, step_val)
-            conn = sqlite3.connect(CoreBridge.DB_PATH)
-            conn.execute("INSERT INTO performance_logs VALUES (?, ?, ?, ?)",
-                         (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), score, hr_val, step_val))
-            conn.commit()
-            conn.close()
-            st.rerun()
+# --- SYNC LOGIC ---
+if init_sync:
+    with st.spinner("Processing Neural Signals..."):
+        generated_score = round(random.uniform(30, 95), 1)
+        st.session_state.current_score = generated_score
+        st.session_state.last_verdict = CoreBridge.get_luna_verdict(generated_score, hr_val, step_val)
+        CoreBridge.save_log(generated_score, hr_val, step_val)
+        st.rerun()
+# ======================================================
+# SYSTEM: Human Performance OS v2.0 (PART 2)
+# MODULE: DASHBOARD RENDERER & GRAPHICS ENGINE
+# ======================================================
 
-# --- MAIN DASHBOARD ---
-st.markdown("<h1 class='main-title'>LUNA SOVEREIGN OS</h1>", unsafe_allow_html=True)
+# --- 1. MAIN DASHBOARD AREA ---
+st.markdown("<h1 class='main-title'>Human Performance OS v2.0</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center; color:#8b949e; margin-bottom:30px;'>Senior Engineer: Abdulrahman | Neural-Biometric Protocol Active</p>", unsafe_allow_html=True)
 
-# دمج النظامين عبر التبويبات (Tabs)
-tab_bio, tab_ai = st.tabs(["📊 BIOMETRIC DASHBOARD", "🤖 NEURAL AI ASSISTANT"])
+# تقسيم الشاشة لعرض العداد والتحليل
+col_left, col_right = st.columns([1, 1.5], gap="large")
 
-with tab_bio:
-    col_l, col_r = st.columns([1, 1.5], gap="large")
-    with col_l:
-        st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>🧠 Live Analysis</h3>", unsafe_allow_html=True)
-        display_score = st.session_state.get('current_score', 0.0)
-        fig_gauge = go.Figure(go.Indicator(
-            mode = "gauge+number", value = display_score,
-            gauge = {'axis': {'range': [0, 100]}, 'bar': {'color': "#00ff88"}, 'bgcolor': "rgba(0,0,0,0)"}
-        ))
-        fig_gauge.update_layout(height=300, paper_bgcolor='rgba(0,0,0,0)', font={'color': "white"})
-        st.plotly_chart(fig_gauge, use_container_width=True)
-
-    with col_r:
-        st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>📈 Performance Timeline</h3>", unsafe_allow_html=True)
-        conn = sqlite3.connect(CoreBridge.DB_PATH)
-        hist_df = pd.read_sql_query("SELECT * FROM performance_logs ORDER BY timestamp DESC LIMIT 15", conn)
-        conn.close()
-        if not hist_df.empty:
-            fig_line = px.area(hist_df.iloc[::-1], x='timestamp', y='performance_score')
-            fig_line.update_traces(line_color='#00ff88', fillcolor='rgba(0, 255, 136, 0.1)')
-            fig_line.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', font={'color': "white"})
-            st.plotly_chart(fig_line, use_container_width=True)
-
-with tab_ai:
-    st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>✨ Neural Link Interface</h3>", unsafe_allow_html=True)
+with col_left:
+    st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>🧠 Live Analysis</h3>", unsafe_allow_html=True)
     
-    # عرض تاريخ المحادثة
-    for message in st.session_state.messages:
-        with st.chat_message(message["role"]):
-            st.markdown(message["content"])
+    # جلب النتيجة الحالية من الـ Session
+    display_score = st.session_state.get('current_score', 46.6)
+    
+    # تصميم العداد (Gauge) الاحترافي
+    fig_gauge = go.Figure(go.Indicator(
+        mode = "gauge+number",
+        value = display_score,
+        number = {'font': {'color': 'white', 'family': 'Orbitron'}},
+        gauge = {
+            'axis': {'range': [0, 100], 'tickcolor': "#00ff88"},
+            'bar': {'color': "#00ff88"},
+            'bgcolor': "rgba(0,0,0,0)",
+            'threshold': {
+                'line': {'color': "red", 'width': 4},
+                'thickness': 0.75,
+                'value': display_score
+            }
+        }
+    ))
+    fig_gauge.update_layout(height=300, paper_bgcolor='rgba(0,0,0,0)', font={'color': "white"})
+    st.plotly_chart(fig_gauge, use_container_width=True)
+    
+    # رسالة حالة العداد (تحت العداد مباشرة)
+    if display_score < 50:
+        st.markdown("<p style='text-align:center; color:#ff4b4b; font-weight:bold;'>🔴 CRITICAL: تراجع في الأداء الحيوي</p>", unsafe_allow_html=True)
+    else:
+        st.markdown("<p style='text-align:center; color:#00ff88; font-weight:bold;'>🟢 OPTIMAL: حالة النظام مستقرة</p>", unsafe_allow_html=True)
 
-    # مدخل الشات المرتبط بـ Snowflake Cortex
-    if user_query := st.chat_input("Connect with LUNA Intelligence..."):
-        st.session_state.messages.append({"role": "user", "content": user_query})
-        with st.chat_message("user"):
-            st.markdown(user_query)
-        
-        with st.chat_message("assistant"):
-            session = CoreBridge.get_snowflake_session()
-            if session:
-                with st.spinner("Thinking..."):
-                    # منطق بناء البرومبت من الكود الثاني
-                    prompt = f"<question>{user_query}</question>"
-                    response_gen = complete(CoreBridge.MODEL, prompt, stream=True, session=session)
-                    response = st.write_stream(response_gen)
-            else:
-                response = "⚠️ Connection to Snowflake not established. Please check your secrets.toml file."
-                st.info(response)
-            
-            st.session_state.messages.append({"role": "assistant", "content": response})
+with col_right:
+    st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>📈 Performance Timeline</h3>", unsafe_allow_html=True)
+    
+    # جلب البيانات التاريخية من قاعدة البيانات
+    hist_df = CoreBridge.fetch_historical_data()
+    
+    if not hist_df.empty:
+        # رسم بياني مساحي (Area Chart) يشبه الصورة 2
+        fig_line = px.area(hist_df.iloc[::-1], x='timestamp', y='performance_score')
+        fig_line.update_traces(
+            line_color='#00ff88', 
+            fillcolor='rgba(0, 255, 136, 0.1)', 
+            markers=True,
+            line_width=3
+        )
+        fig_line.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)', 
+            plot_bgcolor='rgba(0,0,0,0)', 
+            height=350,
+            xaxis=dict(showgrid=True, gridcolor='#1f2937', title="Time Protocol"),
+            yaxis=dict(showgrid=True, gridcolor='#1f2937', title="Score"),
+            font={'color': "white"}
+        )
+        st.plotly_chart(fig_line, use_container_width=True)
+    else:
+        st.info("No telemetry logs found. Initiate Sync to populate data.")
 
-# --- FOOTER ---
+# --- 2. SYSTEM LOGS SECTION (Image 3 Style) ---
+st.divider()
+with st.expander("📂 VIEW SYSTEM DATABASE LOGS (SQLite3)"):
+    st.markdown("<h4 style='color:#00ff88; font-family:Orbitron;'>📜 RAW TELEMETRY DATA</h4>", unsafe_allow_html=True)
+    if not hist_df.empty:
+        # تنسيق الجدول ليكون داكناً واحترافياً
+        st.dataframe(
+            hist_df.style.format({"performance_score": "{:.1f}"}),
+            use_container_width=True
+        )
+    else:
+        st.write("Database is currently empty. Waiting for neural signal...")
+
+# --- 3. FINAL FOOTER ---
 st.markdown(f"""
     <div style='text-align:center; margin-top:50px; padding:30px; color:#30363d; border-top:1px solid #161b22;'>
-        <p style='font-family:Orbitron; font-size:0.9em; color:#00ff88; opacity:0.6;'>LUNA CORE v10.0 | SENIOR ENG. ABDULRAHMAN</p>
+        <p style='font-family:Orbitron; font-size:0.9em; color:#00ff88; opacity:0.6; letter-spacing: 2px;'>
+            LUNA CORE v10.0 | SOVEREIGN HUMAN OS
+        </p>
+        <p style='font-size:0.8em; font-family:JetBrains Mono;'>
+            ENCRYPTED BIOMETRIC GATEWAY • {datetime.now().year} • LEAD ENG. ABDULRAHMAN
+        </p>
     </div>
 """, unsafe_allow_html=True)

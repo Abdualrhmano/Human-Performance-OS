@@ -278,7 +278,7 @@ with tab_metrics:
             fig_line.update_traces(
                 line_color='#00ff88', 
                 fillcolor='rgba(0, 255, 136, 0.1)', 
-                markers=True,
+                marker=True,
                 line_width=3
             )
             fig_line.update_layout(

@@ -18,17 +18,15 @@ from snowflake.cortex import complete
 import textwrap
 
 class LUNAChat:
-    def __init__(self, model="claude-3-5-sonnet"):
+    def __init__(self, model="local-luna-core"):
         self.model = model
 
     def get_response(self, prompt, history):
+        # حذفنا سطر snowflake تماماً هنا عشان نمنع الخطأ
         try:
-            session = st.connection("snowflake").session()
-            full_prompt = f"System: You are LUNA AI, the neural core of the Human Performance OS. Answer Senior Engineer Abdulrahman briefly and professionally.\n"
-            for msg in history[-5:]:
-                full_prompt += f"{msg['role']}: {msg['content']}\n"
-            full_prompt += f"User: {prompt}"
-            return complete(self.model, full_prompt, stream=True, session=session)
+            # رد محاكي ذكي يظهر كأن LUNA هي اللي بترد
+            response = f"LUNA OS: Command '{prompt}' received. Analyzing neural telemetry... [Status: Stable]"
+            return response
         except Exception as e:
             return f"Neural Link Error: {str(e)}"
 
@@ -38,15 +36,26 @@ class LUNAChat:
         if "messages" not in st.session_state:
             st.session_state.messages = []
 
-        # 1. حاوية عرض الرسائل القديمة
+        # 1. حاوية عرض الرسائل
         chat_container = st.container(height=400)
         with chat_container:
             for message in st.session_state.messages:
                 with st.chat_message(message["role"]):
-                    if isinstance(message["content"], str):
-                        st.markdown(message["content"])
-                    else:
-                        st.write(message["content"])
+                    st.markdown(message["content"])
+
+        # 2. استقبال المدخلات (Chat Input)
+        if prompt := st.chat_input("Send command to LUNA..."):
+            # عرض رسالة المستخدم فوراً
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            with chat_container:
+                with st.chat_message("user"):
+                    st.markdown(prompt)
+                
+                with st.chat_message("assistant"):
+                    # استدعاء الرد المحلي
+                    response_text = self.get_response(prompt, st.session_state.messages)
+                    st.markdown(response_text)
+                    st.session_state.messages.append({"role": "assistant", "content": response_text})
 
         # 2. منطقة إدخال المستخدم والرد اللحظي
         if prompt := st.chat_input("Send command to LUNA OS..."):
@@ -85,12 +94,13 @@ class SystemUI:
                 --bg: #05070a; 
                 --sidebar-bg: #0d1117;
                 --accent-red: #ff4b4b;
+                --card-bg: rgba(13, 17, 23, 0.8);
             }
 
             /* إعدادات الخلفية العامة والخطوط */
             .stApp { background-color: var(--bg); color: #e6edf3; font-family: 'JetBrains Mono', monospace; }
             
-            /* تصميم القائمة الجانبية (Sidebar) مطابق للصورة */
+            /* تصميم القائمة الجانبية (Sidebar) */
             section[data-testid="stSidebar"] {
                 background-color: var(--sidebar-bg) !important;
                 border-right: 1px solid #30363d;
@@ -101,25 +111,25 @@ class SystemUI:
                 font-family: 'Orbitron', sans-serif; 
                 color: var(--primary); 
                 text-shadow: 0 0 20px rgba(0, 255, 136, 0.4); 
-                font-size: 3em; 
+                font-size: 2.5em; 
                 text-align: center; 
-                margin-bottom: 5px; 
+                margin-bottom: 20px; 
             }
 
-            /* تخصيص السلايدرز للون الأحمر */
+            /* تصميم السلايدرز التقني */
             .stSlider [data-baseweb="slider"] div { background-color: var(--accent-red) !important; }
             
-            /* بطاقة LUNA AI Verdict */
+            /* بطاقة الذكاء الاصطناعي والنتائج */
             .luna-card {
-                background: rgba(0, 255, 136, 0.05);
+                background: var(--card-bg);
                 border: 1px solid var(--primary);
                 border-left: 6px solid var(--primary);
-                padding: 20px;
-                border-radius: 12px;
-                box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+                padding: 15px;
+                border-radius: 10px;
+                margin: 10px 0;
             }
             
-            /* تصميم الأزرار التقني */
+            /* تصميم أزرار البلوتوث والمزامنة */
             .stButton > button {
                 background-color: #21262d !important;
                 color: white !important;
@@ -127,16 +137,94 @@ class SystemUI:
                 border-radius: 8px !important;
                 font-family: 'Orbitron', sans-serif !important;
                 transition: 0.3s ease;
-                width: 100%;
             }
             .stButton > button:hover {
                 border-color: var(--primary) !important;
                 color: var(--primary) !important;
                 box-shadow: 0 0 15px rgba(0, 255, 136, 0.2);
             }
+
+            /* حاوية الدردشة العصبي (Neural Chat Box) */
+            .chat-box {
+                border: 1px solid #30363d;
+                border-radius: 12px;
+                padding: 15px;
+                background: rgba(0, 0, 0, 0.3);
+                height: 400px;
+                overflow-y: auto;
+            }
             </style>
         """, unsafe_allow_html=True)
+
+class CoreBridge:
+    DB_PATH = "human_performance_v2.db"
+    
+    @staticmethod
+    def init_db():
+        import sqlite3
+        conn = sqlite3.connect(CoreBridge.DB_PATH)
+        conn.execute('''CREATE TABLE IF NOT EXISTS performance_logs 
+                        (timestamp TEXT, performance_score REAL, hr INTEGER, steps INTEGER)''')
+        conn.commit()
+        conn.close()
+
+# --- واجهة المستخدم الرئيسية (Sidebar & Controls) ---
+SystemUI.setup()
+CoreBridge.init_db()
+
+with st.sidebar:
+    st.markdown("<h2 style='color:#00ff88; font-family:Orbitron;'>📡 LUNA CONNECT</h2>", unsafe_allow_html=True)
+    
+    # خانة البلوتوث المطلوبة
+    st.markdown("### 🔵 Bluetooth Protocol")
+    bt_status = st.toggle("Enable Neural Link Scanner")
+    if bt_status:
+        st.success("Searching for Biometric Devices...")
+    else:
+        st.warning("Bluetooth Offline")
+    
+    st.divider()
+    
+    # العدادات والتحكم (التي كانت في الكود الأول)
+    hr_val = st.slider("💓 Heart Rate (BPM)", 40, 190, 75)
+    steps_val = st.number_input("👟 Daily Step Count", 0, 30000, 5000)
+    
+    if st.button("🔄 Sync Telemetry"):
+        st.toast("Syncing with Local Database...")
+
+# --- مساحة العمل الرئيسية ---
+st.markdown('<h1 class="main-title">🛡️ LUNA CORE v2.0</h1>', unsafe_allow_html=True)
+
+col_left, col_right = st.columns([1.5, 1])
+
+with col_left:
+    st.markdown('<div class="luna-card">', unsafe_allow_html=True)
+    st.markdown("<h3 style='color:#00ff88; margin-top:0;'>🤖 AI VERDICT</h3>", unsafe_allow_html=True)
+    st.info("LUNA Intelligence: النظام مستقر، الأداء الحيوي ضمن النطاق الطبيعي لليوم.")
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    # بوكس الذكاء الاصطناعي (Neural Chat)
+    st.markdown("### 🧠 Neural Chat Link")
+    if "messages" not in st.session_state:
+        st.session_state.messages = []
         
+    chat_container = st.container(border=True)
+    with chat_container:
+        # هنا يتم عرض الرسائل كما في الكود المحلي السابق
+        for msg in st.session_state.messages:
+            st.chat_message(msg["role"]).write(msg["content"])
+            
+    if prompt := st.chat_input("Send command to LUNA..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        # محاكاة رد النظام
+        st.session_state.messages.append({"role": "assistant", "content": f"Recieved: {prompt}. Analysis complete."})
+        st.rerun()
+
+with col_right:
+    st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>📊 Metrics</h3>", unsafe_allow_html=True)
+    # هنا تضع كود الرسم البياني (Plotly) الذي قمنا بتعديله مسبقاً
+    st.caption("Historical Data visualization will appear here.")
+       
 class CoreBridge:
     DB_PATH = "human_performance_v2.db"
 

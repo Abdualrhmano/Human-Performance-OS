@@ -274,14 +274,14 @@ with tab_metrics:
         hist_df = CoreBridge.fetch_historical_data()
         
         if not hist_df.empty:
-            fig_line = px.area(hist_df.iloc[::-1], x='timestamp', y='performance_score')
-              fig_line.update_traces(
-                line_color='#00ff88', 
-                fillcolor='rgba(0, 255, 136, 0.1)', 
-                # التعديل هنا: بنبعت قاموس لمواصفات النقطة بدل True
-                marker=dict(size=8, color='#00ff88', symbol='circle'),
-                line_width=3
-            )
+    fig_line = px.area(hist_df.iloc[::-1], x='timestamp', y='performance_score')
+    fig_line.update_traces(
+        line_color='#00ff88', 
+        fillcolor='rgba(0, 255, 136, 0.1)', 
+        marker=dict(size=8, color='#00ff88', symbol='circle'),
+        line_width=3
+    )
+
             fig_line.update_layout(
                 paper_bgcolor='rgba(0,0,0,0)', 
                 plot_bgcolor='rgba(0,0,0,0)', 

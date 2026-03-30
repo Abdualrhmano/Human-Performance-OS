@@ -134,10 +134,12 @@ class CoreBridge:
     @staticmethod
     def save_log(score, hr, steps):
         conn = sqlite3.connect(CoreBridge.DB_PATH)
-        conn.execute("INSERT INTO performance_logs (timestamp, performance_score, hr, steps) VALUES (?, ?, ?, ?)",
-                       (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), score, hr, steps))
+        # حددنا الأعمدة والقيم بوضوح
+        query = "INSERT INTO performance_logs (timestamp, performance_score, hr, steps) VALUES (?, ?, ?, ?)"
+        conn.execute(query, (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), score, hr, steps))
         conn.commit()
         conn.close()
+
 
     @staticmethod
     def get_luna_verdict(score, hr, steps):

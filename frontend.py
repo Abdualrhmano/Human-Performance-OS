@@ -41,16 +41,31 @@ class LUNAChat:
         with chat_container:
             for message in st.session_state.messages:
                 with st.chat_message(message["role"]):
-                    st.markdown(message["content"])
+                    # التأكد من عرض المحتوى سواء كان نص أو قاموس
+                    if isinstance(message["content"], str):
+                        st.markdown(message["content"])
+                    else:
+                        # في حالة وجود محتوى معقد أو JSON
+                        st.write(message["content"])
+
 
         if prompt := st.chat_input("Send command to LUNA OS..."):
             st.session_state.messages.append({"role": "user", "content": prompt})
             with chat_container:
                 with st.chat_message("user"):
                     st.markdown(prompt)
-                with st.chat_message("assistant"):
+                   with st.chat_message("assistant"):
                     response_gen = self.get_response(prompt, st.session_state.messages)
-                    full_response = st.write_stream(response_gen)
+                    
+                    # فحص: لو الرد نص عادي (String) مش Stream
+                    if isinstance(response_gen, str):
+                        st.markdown(response_gen)
+                        full_response = response_gen
+                    else:
+                        # لو الرد فعلاً Stream جاي من Snowflake
+                        full_response = st.write_stream(response_gen)
+                    
+                    # حفظ الرد في الذاكرة (Session State)
                     st.session_state.messages.append({"role": "assistant", "content": full_response})
 
 # 1. PROFESSIONAL UI CONFIGURATION
@@ -123,13 +138,28 @@ class SystemUI:
 class CoreBridge:
     DB_PATH = 'human_performance_v2.db'
     
-    @staticmethod
+       @staticmethod
     def init_db():
         conn = sqlite3.connect(CoreBridge.DB_PATH)
+        # 1. محاولة إنشاء الجدول بالأعمدة الأربعة (في حالة التشغيل لأول مرة)
         conn.execute('''CREATE TABLE IF NOT EXISTS performance_logs 
                         (timestamp TEXT, performance_score REAL, hr INTEGER, steps INTEGER)''')
+        
+        # 2. فحص الأعمدة الحالية في الجدول (لحل مشكلة النسخ القديمة)
+        cursor = conn.execute("PRAGMA table_info(performance_logs)")
+        existing_columns = [column[1] for column in cursor.fetchall()]
+        
+        # 3. إذا وجد أن عمود hr ناقص، قم بإضافته فوراً
+        if 'hr' not in existing_columns:
+            conn.execute("ALTER TABLE performance_logs ADD COLUMN hr INTEGER DEFAULT 75")
+        
+        # 4. إذا وجد أن عمود steps ناقص، قم بإضافته فوراً
+        if 'steps' not in existing_columns:
+            conn.execute("ALTER TABLE performance_logs ADD COLUMN steps INTEGER DEFAULT 0")
+            
         conn.commit()
         conn.close()
+
 
     @staticmethod
     def save_log(score, hr, steps):

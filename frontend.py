@@ -260,77 +260,42 @@ with tab_metrics:
                 }
             }
         ))
-        fig_gauge.update_layout(height=300, paper_bgcolor='rgba(0,0,0,0)', font={'color': "white"})
-        st.plotly_chart(fig_gauge, use_container_width=True)
-        
-        if display_score < 50:
-            st.markdown("<p style='text-align:center; color:#ff4b4b; font-weight:bold;'>🔴 CRITICAL: تراجع في الأداء الحيوي</p>", unsafe_allow_html=True)
-        else:
-            st.markdown("<p style='text-align:center; color:#00ff88; font-weight:bold;'>🟢 OPTIMAL: حالة النظام مستقرة</p>", unsafe_allow_html=True)
-
-    with col_right:
-        st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>📈 Performance Timeline</h3>", unsafe_allow_html=True)
-        
-        hist_df = CoreBridge.fetch_historical_data()
-        
-    if not hist_df.empty:
-        fig_line = px.area(hist_df.iloc[::-1], x='timestamp', y='performance_score')
-        fig_line.update_traces(
-                line_color='#00ff88', 
-                fillcolor='rgba(0, 255, 136, 0.1)', 
-                marker=dict(size=8, color='#00ff88', symbol='circle'),
-                line_width=3
-            )
-        fig_line.update_layout(
-                paper_bgcolor='rgba(0,0,0,0)', 
-                plot_bgcolor='rgba(0,0,0,0)', 
-                height=350,
-                xaxis=dict(showgrid=True, gridcolor='#1f2937', title="Time Protocol"),
-                yaxis=dict(showgrid=True, gridcolor='#1f2937', title="Score"),
-                font={'color': "white"}
-            )
-        st.plotly_chart(fig_line, use_container_width=True)
-    else:
-            st.info("No telemetry logs found. Initiate Sync to populate data.")
-
-
-with tab_ai:
-    # استدعاء كلاس الدردشة (تأكد أنك وضعت تعريف الكلاس في أول الملف)
-    luna_chat = LUNAChat()
-    luna_chat.render_ui()
+            # 1. العداد وتنبيه الحالة (مرة واحدة فقط)
+    fig_gauge.update_layout(height=300, paper_bgcolor='rgba(0,0,0,0)', font={'color': "white"})
+    st.plotly_chart(fig_gauge, use_container_width=True, key="main_performance_gauge")
     
-    # رسالة حالة العداد (تحت العداد مباشرة)
     if display_score < 50:
         st.markdown("<p style='text-align:center; color:#ff4b4b; font-weight:bold;'>🔴 CRITICAL: تراجع في الأداء الحيوي</p>", unsafe_allow_html=True)
     else:
         st.markdown("<p style='text-align:center; color:#00ff88; font-weight:bold;'>🟢 OPTIMAL: حالة النظام مستقرة</p>", unsafe_allow_html=True)
 
-with col_right:
-    st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>📈 Performance Timeline</h3>", unsafe_allow_html=True)
-    
-    # جلب البيانات التاريخية من قاعدة البيانات
-    hist_df = CoreBridge.fetch_historical_data()
-    
-    if not hist_df.empty:
-        # رسم بياني مساحي (Area Chart) يشبه الصورة 2
-        fig_line = px.area(hist_df.iloc[::-1], x='timestamp', y='performance_score')
-        fig_line.update_traces(
-            line_color='#00ff88', 
-            fillcolor='rgba(0, 255, 136, 0.1)', 
-            marker=dict(size=8, color='#00ff88', symbol='circle'), # التأكد من حذف حرف الـ s
-            line_width=3
-        )
-        fig_line.update_layout(
-            paper_bgcolor='rgba(0,0,0,0)', 
-            plot_bgcolor='rgba(0,0,0,0)', 
-            height=350,
-            xaxis=dict(showgrid=True, gridcolor='#1f2937', title="Time Protocol"),
-            yaxis=dict(showgrid=True, gridcolor='#1f2937', title="Score"),
-            font={'color': "white"}
-        )
-        st.plotly_chart(fig_line, use_container_width=True)
-    else:
-        st.info("No telemetry logs found. Initiate Sync to populate data.")
+    # 2. تنظيم التبويبات (الشات والبيانات)
+    tab_neural, tab_sys = st.tabs(["🤖 NEURAL LINK", "📊 SYSTEM METRICS"])
+
+    with tab_neural:
+        # هنا الشات والـ Timeline جنب بعض بشكل احترافي
+        col_chat, col_timeline = st.columns([2, 1])
+        
+        with col_chat:
+            luna_chat = LUNAChat()
+            luna_chat.render_ui()
+
+        with col_timeline:
+            st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>📈 Timeline</h3>", unsafe_allow_html=True)
+            hist_df = CoreBridge.fetch_historical_data()
+            if not hist_df.empty:
+                fig_line = px.area(hist_df.iloc[::-1], x='timestamp', y='performance_score')
+                fig_line.update_traces(
+                    line_color='#00ff88', 
+                    fillcolor='rgba(0, 255, 136, 0.1)', 
+                    marker=dict(size=8, color='#00ff88'), 
+                    line_width=3
+                )
+                fig_line.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=300, font={'color': "white"})
+                st.plotly_chart(fig_line, use_container_width=True, key="unique_performance_chart")
+            else:
+                st.info("No data yet.")
+
 
 # --- 2. SYSTEM LOGS SECTION (Image 3 Style) ---
 st.divider()

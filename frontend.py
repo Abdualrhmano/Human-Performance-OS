@@ -317,7 +317,7 @@ with col_right:
         fig_line.update_traces(
             line_color='#00ff88', 
             fillcolor='rgba(0, 255, 136, 0.1)', 
-            markers=True,
+            marker=dict(size=8, color='#00ff88', symbol='circle'), # التأكد من حذف حرف الـ s
             line_width=3
         )
         fig_line.update_layout(

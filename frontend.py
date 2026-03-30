@@ -136,66 +136,58 @@ class SystemUI:
             }
             </style>
         """, unsafe_allow_html=True)
-
-# 2. CORE SYSTEM BRIDGE
+        
 class CoreBridge:
-    DB_PATH = 'human_performance_v2.db'
-    
-       @staticmethod
+    DB_PATH = "human_performance_v2.db"
+
+    @staticmethod
     def init_db():
         conn = sqlite3.connect(CoreBridge.DB_PATH)
-        # 1. محاولة إنشاء الجدول بالأعمدة الأربعة (في حالة التشغيل لأول مرة)
+        # إنشاء الجدول بالأعمدة الأربعة مباشرة
         conn.execute('''CREATE TABLE IF NOT EXISTS performance_logs 
                         (timestamp TEXT, performance_score REAL, hr INTEGER, steps INTEGER)''')
         
-        # 2. فحص الأعمدة الحالية في الجدول (لحل مشكلة النسخ القديمة)
+        # فحص ذكي لإضافة الأعمدة لو الجدول قديم (Migration)
         cursor = conn.execute("PRAGMA table_info(performance_logs)")
-        existing_columns = [column[1] for column in cursor.fetchall()]
-        
-        # 3. إذا وجد أن عمود hr ناقص، قم بإضافته فوراً
-        if 'hr' not in existing_columns:
+        columns = [column[1] for column in cursor.fetchall()]
+        if 'hr' not in columns:
             conn.execute("ALTER TABLE performance_logs ADD COLUMN hr INTEGER DEFAULT 75")
-        
-        # 4. إذا وجد أن عمود steps ناقص، قم بإضافته فوراً
-        if 'steps' not in existing_columns:
+        if 'steps' not in columns:
             conn.execute("ALTER TABLE performance_logs ADD COLUMN steps INTEGER DEFAULT 0")
-            
         conn.commit()
         conn.close()
-
 
     @staticmethod
     def save_log(score, hr, steps):
         conn = sqlite3.connect(CoreBridge.DB_PATH)
-        # حددنا الأعمدة والقيم بوضوح
         query = "INSERT INTO performance_logs (timestamp, performance_score, hr, steps) VALUES (?, ?, ?, ?)"
         conn.execute(query, (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), score, hr, steps))
         conn.commit()
         conn.close()
 
-
-    @staticmethod
-    def get_luna_verdict(score, hr, steps):
-        hr_advice = "🟢 نبض مستقر"
-        if hr > 110: hr_advice = "⚠️ تنبيه: معدل النبض مرتفع جداً؛ يرجى ممارسة تمارين التنفس."
-        elif hr < 50: hr_advice = "💤 تنبيه: النبض منخفض؛ قد تكون في حالة إرشادية أو خمول."
-
-        activity_advice = "🏃 استمر في التحرك لكسر حالة الخمول." if steps < 3000 else "🌟 معدل نشاطك الحركي جيد جداً."
-
-        if score >= 80: status = "🔥 أداؤك في القمة! النظام في حالة تناغم كامل."
-        elif score >= 50: status = "🟢 وضع مستقر. حافظ على روتينك الحالي مع شرب الماء."
-        else: status = "🔴 تراجع ملحوظ في الأداء الحيوي. نظام LUNA يوصي بالراحة الآن."
-
-        return f"{status}\n\n{hr_advice}\n{activity_advice}"
-
     @staticmethod
     def fetch_historical_data():
         try:
             conn = sqlite3.connect(CoreBridge.DB_PATH)
-            df = pd.read_sql_query("SELECT * FROM performance_logs ORDER BY timestamp DESC LIMIT 15", conn)
+            df = pd.read_sql_query("SELECT * FROM performance_logs ORDER BY timestamp DESC LIMIT 20", conn)
             conn.close()
             return df
-        except: return pd.DataFrame()
+        except Exception:
+            return pd.DataFrame()
+
+    @staticmethod
+    def get_luna_verdict(score, hr, steps):
+        hr_advice = "🟢 نبض مستقر"
+        if hr > 110: hr_advice = "⚠️ معدل النبض مرتفع جداً؛ يرجى ممارسة تمارين التنفس"
+        elif hr < 50: hr_advice = "💤 النبض منخفض؛ قد تكون في حالة إرشادية أو خمول"
+        
+        activity_advice = "🏃 استمر في التحرك لكسر حالة الخمول" if steps < 3000 else "💪 أداء حركي ممتاز"
+        
+        if score >= 80: status = "🔥 أداؤك في القمة! النظام في حالة تناغم كامل"
+        elif score >= 50: status = "🟢 مستقر. حافظ على روتينك الحالي مع شرب الماء"
+        else: status = "🔴 يوصي بالراحة الآن LUNA تلاحظ تراجع في الأداء الحيوي"
+        
+        return f"{status}\n\n{hr_advice}\n\n{activity_advice}"
 
 # 3. INITIALIZATION
 SystemUI.setup()

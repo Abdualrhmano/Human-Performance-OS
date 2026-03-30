@@ -289,7 +289,7 @@ with tab_metrics:
                 yaxis=dict(showgrid=True, gridcolor='#1f2937', title="Score"),
                 font={'color': "white"}
             )
-            st.plotly_chart(fig_line, use_container_width=True)
+        st.plotly_chart(fig_line, use_container_width=True)
     else:
             st.info("No telemetry logs found. Initiate Sync to populate data.")
 

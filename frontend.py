@@ -34,38 +34,41 @@ class LUNAChat:
 
     def render_ui(self):
         st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>🤖 Neural Chat Link</h3>", unsafe_allow_html=True)
+        
         if "messages" not in st.session_state:
             st.session_state.messages = []
 
+        # 1. حاوية عرض الرسائل القديمة
         chat_container = st.container(height=400)
         with chat_container:
             for message in st.session_state.messages:
                 with st.chat_message(message["role"]):
-                    # التأكد من عرض المحتوى سواء كان نص أو قاموس
                     if isinstance(message["content"], str):
                         st.markdown(message["content"])
                     else:
-                        # في حالة وجود محتوى معقد أو JSON
                         st.write(message["content"])
 
-
+        # 2. منطقة إدخال المستخدم والرد اللحظي
         if prompt := st.chat_input("Send command to LUNA OS..."):
+            # حفظ رسالة المستخدم
             st.session_state.messages.append({"role": "user", "content": prompt})
+            
             with chat_container:
+                # عرض رسالة المستخدم فوراً
                 with st.chat_message("user"):
                     st.markdown(prompt)
-                   with st.chat_message("assistant"):
-                    response_gen = self.get_response(prompt, st.session_state.messages)
+
+                # عرض رد الـ AI (هنا كان الغلط في المسافات)
+                with st.chat_message("assistant"):
+                    response_gen = self.get_response(prompt, st.session_state.messages[:-1])
                     
-                    # فحص: لو الرد نص عادي (String) مش Stream
                     if isinstance(response_gen, str):
                         st.markdown(response_gen)
                         full_response = response_gen
                     else:
-                        # لو الرد فعلاً Stream جاي من Snowflake
                         full_response = st.write_stream(response_gen)
                     
-                    # حفظ الرد في الذاكرة (Session State)
+                    # حفظ الرد النهائي في الذاكرة
                     st.session_state.messages.append({"role": "assistant", "content": full_response})
 
 # 1. PROFESSIONAL UI CONFIGURATION

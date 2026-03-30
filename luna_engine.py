@@ -10,6 +10,36 @@ import time
 import streamlit as st
 from snowflake.core import Root
 from snowflake.cortex import complete
+import streamlit as st
+from snowflake.cortex import complete
+import textwrap
+
+
+
+# إعدادات الموديل
+MODEL = "claude-3-5-sonnet"
+
+def ask_luna(question, chat_history):
+    """
+    هذه الدالة هي حلقة الوصل بين واجهتك وبين ذكاء Snowflake
+    """
+    try:
+        # الحصول على الجلسة (Session)
+        session = st.connection("snowflake").session()
+        
+        # تحويل تاريخ المحادثة لنص ليفهمه الموديل
+        history_str = "\n".join([f"[{m['role']}]: {m['content']}" for m in chat_history[-5:]])
+        
+        # بناء التعليمات (Instructions)
+        instructions = "You are LUNA AI, a part of the Sovereign Human OS. Be brief and professional."
+        
+        # تجميع البرومبت النهائي
+        full_prompt = f"<instructions>{instructions}</instructions>\n<history>{history_str}</history>\n<question>{question}</question>"
+        
+        # طلب الرد بنظام التدفق (Stream)
+        return complete(MODEL, full_prompt, stream=True, session=session)
+    except Exception as e:
+        return f"Neural Link Error: {str(e)}"
 
 
 st.set_page_config(page_title="Streamlit AI assistant", page_icon="✨")

@@ -1,11 +1,10 @@
 # ======================================================
-# SYSTEM: Human Performance OS v2.0 (PART 1)
+# SYSTEM: Human Performance OS v2.0 (INTEGRATED)
 # ARCHITECT: Abdulrahman (Lead Software Engineer)
-# MODULE: LOGIC, BLE & NEURAL SIMULATION ENGINE
+# MODULE: LUNA CORE & BIOMETRIC GATEWAY
 # ======================================================
 
 import streamlit as st
-import requests
 import pandas as pd
 import sqlite3
 import plotly.graph_objects as go
@@ -23,118 +22,123 @@ class SystemUI:
         st.markdown("""
             <style>
             @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=JetBrains+Mono:wght@300;500&display=swap');
-            :root { --primary: #00ff88; --bg: #05070a; --card-bg: rgba(13, 17, 23, 0.9); }
-            html, body, [data-testid="stSidebar"] { font-family: 'JetBrains Mono', monospace; background-color: var(--bg); }
-            .main-title { font-family: 'Orbitron', sans-serif; color: var(--primary); text-shadow: 0 0 15px rgba(0, 255, 136, 0.4); font-size: 3.2em; text-align: center; margin-bottom: 0px; }
-            .ai-insight-card { 
-                background: linear-gradient(145deg, rgba(0,255,136,0.05), rgba(0,0,0,0.5)); 
-                border-left: 5px solid var(--primary); 
-                padding: 25px; border-radius: 12px; 
-                box-shadow: 0 10px 30px rgba(0,0,0,0.3); 
+            
+            :root { 
+                --primary: #00ff88; 
+                --bg: #05070a; 
+                --sidebar-bg: #0d1117;
+                --accent-red: #ff4b4b;
+            }
+
+            /* إعدادات الخلفية العامة والخطوط */
+            .stApp { background-color: var(--bg); color: #e6edf3; font-family: 'JetBrains Mono', monospace; }
+            
+            /* تصميم القائمة الجانبية (Sidebar) مطابق للصورة */
+            section[data-testid="stSidebar"] {
+                background-color: var(--sidebar-bg) !important;
+                border-right: 1px solid #30363d;
+            }
+
+            /* العنوان الرئيسي المتوهج */
+            .main-title { 
+                font-family: 'Orbitron', sans-serif; 
+                color: var(--primary); 
+                text-shadow: 0 0 20px rgba(0, 255, 136, 0.4); 
+                font-size: 3em; 
+                text-align: center; 
+                margin-bottom: 5px; 
+            }
+
+            /* تخصيص السلايدرز للون الأحمر */
+            .stSlider [data-baseweb="slider"] div { background-color: var(--accent-red) !important; }
+            
+            /* بطاقة LUNA AI Verdict */
+            .luna-card {
+                background: rgba(0, 255, 136, 0.05);
+                border: 1px solid var(--primary);
+                border-left: 6px solid var(--primary);
+                padding: 20px;
+                border-radius: 12px;
+                box-shadow: 0 10px 40px rgba(0,0,0,0.5);
+            }
+            
+            /* تصميم الأزرار التقني */
+            .stButton > button {
+                background-color: #21262d !important;
+                color: white !important;
+                border: 1px solid #30363d !important;
+                border-radius: 8px !important;
+                font-family: 'Orbitron', sans-serif !important;
+                transition: 0.3s ease;
+                width: 100%;
+            }
+            .stButton > button:hover {
+                border-color: var(--primary) !important;
+                color: var(--primary) !important;
+                box-shadow: 0 0 15px rgba(0, 255, 136, 0.2);
             }
             </style>
         """, unsafe_allow_html=True)
 
-# 2. ADVANCED HYBRID BLUETOOTH ENGINE
-class BluetoothEngine:
-    HR_SERVICE_UUID = "00002a37-0000-1000-8000-00805f9b34fb"
-
-    @staticmethod
-    async def scan_active_devices():
-        try:
-            devices = await BleakScanner.discover(timeout=2.0)
-            if devices:
-                return {d.name if d.name else f"Unknown ({d.address})": d.address for d in devices}
-            raise Exception("No real devices found")
-        except:
-            return {
-                "LUNA-Watch-Pro (Simulated)": "SIM:DEVICE:01",
-                "Bio-Neural-Link (Simulated)": "SIM:DEVICE:02"
-            }
-
-    @staticmethod
-    async def fetch_live_biometrics(address):
-        if "SIM" in str(address):
-            await asyncio.sleep(1.5)
-            return random.randint(65, 85)
-        try:
-            async with BleakClient(address, timeout=10.0) as client:
-                if await client.is_connected():
-                    raw_data = await client.read_gatt_char(BluetoothEngine.HR_SERVICE_UUID)
-                    return raw_data[1]
-                return None
-        except Exception as e:
-            st.sidebar.error(f"Hardware Link Error: {str(e)}")
-            return None
-
-# 3. CORE SYSTEM BRIDGE (مع دمج تحليل LUNA)
+# 2. CORE SYSTEM BRIDGE
 class CoreBridge:
     DB_PATH = 'human_performance_v2.db'
     
     @staticmethod
-    def get_luna_verdict(score, hr, steps):
-        """
-        تحليل LUNA المطور: يربط بين العداد (Score) والبيانات الحيوية (HR & Steps)
-        ليعطي إجابة تشخيصية دقيقة كما طلبت.
-        """
-        # 1. تحليل النبض (Heart Rate Analysis)
-        hr_advice = ""
-        if hr > 110:
-            hr_advice = "⚠️ تنبيه: معدل النبض مرتفع جداً؛ يرجى ممارسة تمارين التنفس."
-        elif hr < 50:
-            hr_advice = "💤 تنبيه: النبض منخفض؛ قد تكون في حالة إرشادية أو خمول."
+    def init_db():
+        conn = sqlite3.connect(CoreBridge.DB_PATH)
+        conn.execute('''CREATE TABLE IF NOT EXISTS performance_logs 
+                        (timestamp TEXT, performance_score REAL, hr INTEGER, steps INTEGER)''')
+        conn.commit()
+        conn.close()
 
-        # 2. تحليل النشاط (Activity Analysis)
+    @staticmethod
+    def save_log(score, hr, steps):
+        conn = sqlite3.connect(CoreBridge.DB_PATH)
+        conn.execute("INSERT INTO performance_logs (timestamp, performance_score, hr, steps) VALUES (?, ?, ?, ?)",
+                       (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), score, hr, steps))
+        conn.commit()
+        conn.close()
+
+    @staticmethod
+    def get_luna_verdict(score, hr, steps):
+        hr_advice = "🟢 نبض مستقر"
+        if hr > 110: hr_advice = "⚠️ تنبيه: معدل النبض مرتفع جداً؛ يرجى ممارسة تمارين التنفس."
+        elif hr < 50: hr_advice = "💤 تنبيه: النبض منخفض؛ قد تكون في حالة إرشادية أو خمول."
+
         activity_advice = "🏃 استمر في التحرك لكسر حالة الخمول." if steps < 3000 else "🌟 معدل نشاطك الحركي جيد جداً."
 
-        # 3. التشخيص النهائي بناءً على العداد (Performance Index)
-        if score >= 80:
-            status = "🔥 أداؤك في القمة! النظام في حالة تناغم كامل."
-        elif score >= 50:
-            status = "🟢 وضع مستقر. حافظ على روتينك الحالي مع شرب الماء."
-        else:
-            # هذا النص سيظهر عندما يكون العداد أحمر (مثل 46.6 في صورتك)
-            status = "🔴 تراجع ملحوظ في الأداء الحيوي. نظام LUNA يوصي بالراحة الآن."
+        if score >= 80: status = "🔥 أداؤك في القمة! النظام في حالة تناغم كامل."
+        elif score >= 50: status = "🟢 وضع مستقر. حافظ على روتينك الحالي مع شرب الماء."
+        else: status = "🔴 تراجع ملحوظ في الأداء الحيوي. نظام LUNA يوصي بالراحة الآن."
 
-        # دمج كل الردود في رسالة ذكية واحدة تظهر في الـ Sidebar والـ Verdict Card
         return f"{status}\n\n{hr_advice}\n{activity_advice}"
 
     @staticmethod
     def fetch_historical_data():
         try:
             conn = sqlite3.connect(CoreBridge.DB_PATH)
-            # جلب آخر 15 سجل لعرضها في الرسم البياني والجدول
             df = pd.read_sql_query("SELECT * FROM performance_logs ORDER BY timestamp DESC LIMIT 15", conn)
             conn.close()
             return df
-        except: 
-            return pd.DataFrame()
+        except: return pd.DataFrame()
 
-# ======================================================
-# SYSTEM: Human Performance OS v2.0 (PART 2)
-# MODULE: DASHBOARD RENDERER & LUNA AI VERDICT
-# ======================================================
-
-# التشغيل الأولي لإعدادات الواجهة
+# 3. INITIALIZATION
 SystemUI.setup()
+CoreBridge.init_db()
 
-# --- Sidebar Control Center ---
+# --- SIDEBAR CONTROL CENTER ---
 with st.sidebar:
     st.markdown("<h2 style='color:#00ff88; font-family:Orbitron;'>🛡️ LUNA CORE</h2>", unsafe_allow_html=True)
-    auth_token = st.text_input("NEURAL ACCESS KEY", type="password", placeholder="Enter JWT...")
+    auth_token = st.text_input("NEURAL ACCESS KEY", type="password", value="A7-X9-RAG-CORE-V10")
     
     st.divider()
-    
-    # --- وضع إجابة الذكاء الاصطناعي في الأعلى (حسب طلبك) ---
     st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>🤖 AI VERDICT</h3>", unsafe_allow_html=True)
     
-    # القيمة الافتراضية للتحليل
-    luna_msg = "في انتظار مزامنة البيانات للتحليل..."
-    current_score = 46.6 # القيمة الظاهرة في صورتك
+    # استرجاع البيانات السابقة من الـ Session
+    luna_msg = st.session_state.get('last_verdict', "في انتظار مزامنة البيانات للتحليل...")
+    current_score = st.session_state.get('current_score', 0.0)
     
-    if 'last_verdict' in st.session_state:
-        luna_msg = st.session_state.last_verdict
-
     st.markdown(f"""
         <div style="background: rgba(0,255,136,0.1); border: 1px solid #00ff88; padding: 15px; border-radius: 10px; border-left: 5px solid #00ff88;">
             <p style="color:#00ff88; font-weight:bold; margin-bottom:5px;">LUNA Intelligence:</p>
@@ -143,86 +147,112 @@ with st.sidebar:
     """, unsafe_allow_html=True)
     
     st.divider()
-    
-    # --- مدخلات الحساسات والبيانات ---
     st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>📡 TELEMETRY</h3>", unsafe_allow_html=True)
-    input_mode = st.toggle("Live Bluetooth Mode", value=False)
     
-    selected_address = None
-    if input_mode:
-        if st.button("🔍 Scan for Active Devices"):
-            with st.spinner("Scanning..."):
-                st.session_state.ble_devices = asyncio.run(BluetoothEngine.scan_active_devices())
-        
-        if "ble_devices" in st.session_state:
-            dev_name = st.selectbox("Select Device:", options=list(st.session_state.ble_devices.keys()))
-            selected_address = st.session_state.ble_devices[dev_name]
-
     hr_val = st.slider("💓 Heart Rate (BPM)", 40, 190, 75)
     step_val = st.number_input("👟 Daily Step Count", value=6000)
     
-    init_sync = st.button("🚀 INITIATE SYSTEM SYNC", use_container_width=True)
+    init_sync = st.button("🚀 INITIATE SYSTEM SYNC")
 
-# --- Main Dashboard Area ---
-st.markdown("<h1 class='main-title'>Human Performance OS v2.0</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align:center; color:#8b949e;'>Senior Engineer: Abdulrahman | Neural-Biometric Protocol</p>", unsafe_allow_html=True)
-
-# منطق المزامنة وتحديث الذكاء الاصطناعي
+# --- SYNC LOGIC ---
 if init_sync:
     with st.spinner("Processing Neural Signals..."):
-        # 1. جلب البيانات الحيوية إذا كان وضع البلوتوث مفعلاً
-        if input_mode and selected_address:
-            hr_val = asyncio.run(BluetoothEngine.fetch_live_biometrics(selected_address))
-        
-        # 2. حساب نتيجة الأداء (المحاكاة)
         generated_score = round(random.uniform(30, 95), 1)
-        
-        # 3. استدعاء الدالة المحدثة بجميع المتغيرات المطلوبة (التعديل الأساسي)
-        st.session_state.last_verdict = CoreBridge.get_luna_verdict(
-            generated_score, 
-            hr_val, 
-            step_val
-        )
-        
-        # 4. تحديث الواجهة لعرض النتائج
+        st.session_state.current_score = generated_score
+        st.session_state.last_verdict = CoreBridge.get_luna_verdict(generated_score, hr_val, step_val)
+        CoreBridge.save_log(generated_score, hr_val, step_val)
         st.rerun()
+# ======================================================
+# SYSTEM: Human Performance OS v2.0 (PART 2)
+# MODULE: DASHBOARD RENDERER & GRAPHICS ENGINE
+# ======================================================
 
-# --- التخطيط الرئيسي (العداد والرسم البياني) ---
-col_left, col_right = st.columns([1, 2], gap="large")
+# --- 1. MAIN DASHBOARD AREA ---
+st.markdown("<h1 class='main-title'>Human Performance OS v2.0</h1>", unsafe_allow_html=True)
+st.markdown("<p style='text-align:center; color:#8b949e; margin-bottom:30px;'>Senior Engineer: Abdulrahman | Neural-Biometric Protocol Active</p>", unsafe_allow_html=True)
+
+# تقسيم الشاشة لعرض العداد والتحليل
+col_left, col_right = st.columns([1, 1.5], gap="large")
 
 with col_left:
     st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>🧠 Live Analysis</h3>", unsafe_allow_html=True)
     
-    # عداد الأداء (Gauge) مطابق للصورة
-    fig = go.Figure(go.Indicator(
+    # جلب النتيجة الحالية من الـ Session
+    display_score = st.session_state.get('current_score', 46.6)
+    
+    # تصميم العداد (Gauge) الاحترافي
+    fig_gauge = go.Figure(go.Indicator(
         mode = "gauge+number",
-        value = current_score,
-        title = {'text': "PERFORMANCE INDEX", 'font': {'color': '#00ff88', 'size': 16}},
+        value = display_score,
+        number = {'font': {'color': 'white', 'family': 'Orbitron'}},
         gauge = {
             'axis': {'range': [0, 100], 'tickcolor': "#00ff88"},
             'bar': {'color': "#00ff88"},
             'bgcolor': "rgba(0,0,0,0)",
-            'threshold': {'line': {'color': "red", 'width': 4}, 'value': current_score}
+            'threshold': {
+                'line': {'color': "red", 'width': 4},
+                'thickness': 0.75,
+                'value': display_score
+            }
         }
     ))
-    fig.update_layout(height=300, paper_bgcolor='rgba(0,0,0,0)', font={'color': "white"})
-    st.plotly_chart(fig, use_container_width=True)
-    st.markdown("<p style='text-align:center; color:red;'>🔴 تراجع بحاجة لمعالجة</p>", unsafe_allow_html=True)
+    fig_gauge.update_layout(height=300, paper_bgcolor='rgba(0,0,0,0)', font={'color': "white"})
+    st.plotly_chart(fig_gauge, use_container_width=True)
+    
+    # رسالة حالة العداد (تحت العداد مباشرة)
+    if display_score < 50:
+        st.markdown("<p style='text-align:center; color:#ff4b4b; font-weight:bold;'>🔴 CRITICAL: تراجع في الأداء الحيوي</p>", unsafe_allow_html=True)
+    else:
+        st.markdown("<p style='text-align:center; color:#00ff88; font-weight:bold;'>🟢 OPTIMAL: حالة النظام مستقرة</p>", unsafe_allow_html=True)
 
 with col_right:
     st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>📈 Performance Timeline</h3>", unsafe_allow_html=True)
     
-    # الرسم البياني (Timeline) مطابق للصورة
-    hist_data = CoreBridge.fetch_historical_data()
-    if not hist_data.empty:
-        fig_hist = px.area(hist_data, x='timestamp', y='performance_score')
-        fig_hist.update_traces(line_color='#00ff88', fillcolor='rgba(0, 255, 136, 0.1)', markers=True)
-        fig_hist.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=350)
-        st.plotly_chart(fig_hist, use_container_width=True)
+    # جلب البيانات التاريخية من قاعدة البيانات
+    hist_df = CoreBridge.fetch_historical_data()
+    
+    if not hist_df.empty:
+        # رسم بياني مساحي (Area Chart) يشبه الصورة 2
+        fig_line = px.area(hist_df.iloc[::-1], x='timestamp', y='performance_score')
+        fig_line.update_traces(
+            line_color='#00ff88', 
+            fillcolor='rgba(0, 255, 136, 0.1)', 
+            markers=True,
+            line_width=3
+        )
+        fig_line.update_layout(
+            paper_bgcolor='rgba(0,0,0,0)', 
+            plot_bgcolor='rgba(0,0,0,0)', 
+            height=350,
+            xaxis=dict(showgrid=True, gridcolor='#1f2937', title="Time Protocol"),
+            yaxis=dict(showgrid=True, gridcolor='#1f2937', title="Score"),
+            font={'color': "white"}
+        )
+        st.plotly_chart(fig_line, use_container_width=True)
+    else:
+        st.info("No telemetry logs found. Initiate Sync to populate data.")
 
-# --- جداول النظام (System Logs) كما في الصورة ---
+# --- 2. SYSTEM LOGS SECTION (Image 3 Style) ---
 st.divider()
-st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>📜 SYSTEM LOGS (SQLite)</h3>", unsafe_allow_html=True)
-st.dataframe(hist_data, use_container_width=True)
+with st.expander("📂 VIEW SYSTEM DATABASE LOGS (SQLite3)"):
+    st.markdown("<h4 style='color:#00ff88; font-family:Orbitron;'>📜 RAW TELEMETRY DATA</h4>", unsafe_allow_html=True)
+    if not hist_df.empty:
+        # تنسيق الجدول ليكون داكناً واحترافياً
+        st.dataframe(
+            hist_df.style.format({"performance_score": "{:.1f}"}),
+            use_container_width=True
+        )
+    else:
+        st.write("Database is currently empty. Waiting for neural signal...")
 
-st.markdown(f"<div style='text-align:center; margin-top:50px; color:#30363d;'>LUNA CORE v2.0 | SECURE BIOMETRIC GATEWAY | {datetime.now().year}</div>", unsafe_allow_html=True)
+# --- 3. FINAL FOOTER ---
+st.markdown(f"""
+    <div style='text-align:center; margin-top:50px; padding:30px; color:#30363d; border-top:1px solid #161b22;'>
+        <p style='font-family:Orbitron; font-size:0.9em; color:#00ff88; opacity:0.6; letter-spacing: 2px;'>
+            LUNA CORE v10.0 | SOVEREIGN HUMAN OS
+        </p>
+        <p style='font-size:0.8em; font-family:JetBrains Mono;'>
+            ENCRYPTED BIOMETRIC GATEWAY • {datetime.now().year} • LEAD ENG. ABDULRAHMAN
+        </p>
+    </div>
+""", unsafe_allow_html=True)

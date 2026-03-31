@@ -1,80 +1,22 @@
+# -------------------------------
+# PART 1/3
+# LIBRARIES, UI CONFIG, DATABASE BRIDGE
+# -------------------------------
+
+# المكتبات الأساسية (موجودة هنا في أول كلاس كما طلبت)
 import streamlit as st
 import pandas as pd
 import sqlite3
 import plotly.graph_objects as go
 import plotly.express as px
 from datetime import datetime
-import asyncio
 import random
-from bleak import BleakClient, BleakScanner
+import asyncio
+from bleak import BleakScanner, BleakClient
 
-from snowflake.cortex import complete
-import textwrap
-
-class LUNAChat:
-    def __init__(self, model="local-luna-core"):
-        self.model = model
-
-    def get_response(self, prompt, history):
-        # حذفنا سطر snowflake تماماً هنا عشان نمنع الخطأ
-        try:
-            # رد محاكي ذكي يظهر كأن LUNA هي اللي بترد
-            response = f"LUNA OS: Command '{prompt}' received. Analyzing neural telemetry... [Status: Stable]"
-            return response
-        except Exception as e:
-            return f"Neural Link Error: {str(e)}"
-
-    def render_ui(self):
-        st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>🤖 Neural Chat Link</h3>", unsafe_allow_html=True)
-        
-        if "messages" not in st.session_state:
-            st.session_state.messages = []
-
-        # 1. حاوية عرض الرسائل
-        chat_container = st.container(height=400)
-        with chat_container:
-            for message in st.session_state.messages:
-                with st.chat_message(message["role"]):
-                    st.markdown(message["content"])
-
-        # 2. استقبال المدخلات (Chat Input)
-        if prompt := st.chat_input("Send command to LUNA...", key="luna_chat_input_unique"):
-            # عرض رسالة المستخدم فوراً
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            with chat_container:
-                with st.chat_message("user"):
-                    st.markdown(prompt)
-                
-                with st.chat_message("assistant"):
-                    # استدعاء الرد المحلي
-                    response_text = self.get_response(prompt, st.session_state.messages)
-                    st.markdown(response_text)
-                    st.session_state.messages.append({"role": "assistant", "content": response_text})
-
-        # 2. منطقة إدخال المستخدم والرد اللحظي
-        if prompt := st.chat_input("Send command to LUNA OS..."):
-            # حفظ رسالة المستخدم
-            st.session_state.messages.append({"role": "user", "content": prompt})
-            
-            with chat_container:
-                # عرض رسالة المستخدم فوراً
-                with st.chat_message("user"):
-                    st.markdown(prompt)
-
-                # عرض رد الـ AI (هنا كان الغلط في المسافات)
-                with st.chat_message("assistant"):
-                    response_gen = self.get_response(prompt, st.session_state.messages[:-1])
-                    
-                    if isinstance(response_gen, str):
-                        st.markdown(response_gen)
-                        full_response = response_gen
-                    else:
-                        full_response = st.write_stream(response_gen)
-                    
-                    # حفظ الرد النهائي في الذاكرة
-                    st.session_state.messages.append({"role": "assistant", "content": full_response})
-
-# 1. PROFESSIONAL UI CONFIGURATION
+# -------------------------------
+# 1. SystemUI: إعداد الواجهة والمظهر العام
+# -------------------------------
 class SystemUI:
     @staticmethod
     def setup():
@@ -82,160 +24,26 @@ class SystemUI:
         st.markdown("""
             <style>
             @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700&family=JetBrains+Mono:wght@300;500&display=swap');
-            
-            :root { 
-                --primary: #00ff88; 
-                --bg: #05070a; 
-                --sidebar-bg: #0d1117;
-                --accent-red: #ff4b4b;
-                --card-bg: rgba(13, 17, 23, 0.8);
-            }
-
-            /* إعدادات الخلفية العامة والخطوط */
+            :root { --primary: #00ff88; --bg: #05070a; --sidebar-bg: #0d1117; }
             .stApp { background-color: var(--bg); color: #e6edf3; font-family: 'JetBrains Mono', monospace; }
-            
-            /* تصميم القائمة الجانبية (Sidebar) */
-            section[data-testid="stSidebar"] {
-                background-color: var(--sidebar-bg) !important;
-                border-right: 1px solid #30363d;
-            }
-
-            /* العنوان الرئيسي المتوهج */
-            .main-title { 
-                font-family: 'Orbitron', sans-serif; 
-                color: var(--primary); 
-                text-shadow: 0 0 20px rgba(0, 255, 136, 0.4); 
-                font-size: 2.5em; 
-                text-align: center; 
-                margin-bottom: 20px; 
-            }
-
-            /* تصميم السلايدرز التقني */
-            .stSlider [data-baseweb="slider"] div { background-color: var(--accent-red) !important; }
-            
-            /* بطاقة الذكاء الاصطناعي والنتائج */
-            .luna-card {
-                background: var(--card-bg);
-                border: 1px solid var(--primary);
-                border-left: 6px solid var(--primary);
-                padding: 15px;
-                border-radius: 10px;
-                margin: 10px 0;
-            }
-            
-            /* تصميم أزرار البلوتوث والمزامنة */
-            .stButton > button {
-                background-color: #21262d !important;
-                color: white !important;
-                border: 1px solid #30363d !important;
-                border-radius: 8px !important;
-                font-family: 'Orbitron', sans-serif !important;
-                transition: 0.3s ease;
-            }
-            .stButton > button:hover {
-                border-color: var(--primary) !important;
-                color: var(--primary) !important;
-                box-shadow: 0 0 15px rgba(0, 255, 136, 0.2);
-            }
-
-            /* حاوية الدردشة العصبي (Neural Chat Box) */
-            .chat-box {
-                border: 1px solid #30363d;
-                border-radius: 12px;
-                padding: 15px;
-                background: rgba(0, 0, 0, 0.3);
-                height: 400px;
-                overflow-y: auto;
-            }
+            section[data-testid="stSidebar"] { background-color: var(--sidebar-bg) !important; border-right: 1px solid #30363d; }
+            .main-title { font-family: 'Orbitron', sans-serif; color: var(--primary); text-shadow: 0 0 20px rgba(0,255,136,0.4); font-size: 2.5em; text-align: center; margin-bottom: 20px; }
+            .chat-box { border: 1px solid #30363d; border-radius: 12px; padding: 15px; background: rgba(0,0,0,0.3); height: 400px; overflow-y: auto; }
+            .luna-card { background: rgba(0,255,136,0.1); border: 1px solid #00ff88; padding: 15px; border-radius: 10px; border-left: 5px solid #00ff88; margin-bottom: 15px; }
             </style>
         """, unsafe_allow_html=True)
 
-class CoreBridge:
-    DB_PATH = "human_performance_v2.db"
-    
-    @staticmethod
-    def init_db():
-        import sqlite3
-        conn = sqlite3.connect(CoreBridge.DB_PATH)
-        conn.execute('''CREATE TABLE IF NOT EXISTS performance_logs 
-                        (timestamp TEXT, performance_score REAL, hr INTEGER, steps INTEGER)''')
-        conn.commit()
-        conn.close()
-
-# --- واجهة المستخدم الرئيسية (Sidebar & Controls) ---
-SystemUI.setup()
-CoreBridge.init_db()
-
-with st.sidebar:
-    st.markdown("<h2 style='color:#00ff88; font-family:Orbitron;'>📡 LUNA CONNECT</h2>", unsafe_allow_html=True)
-    
-    # خانة البلوتوث المطلوبة
-    st.markdown("### 🔵 Bluetooth Protocol")
-    bt_status = st.toggle("Enable Neural Link Scanner")
-    if bt_status:
-        st.success("Searching for Biometric Devices...")
-    else:
-        st.warning("Bluetooth Offline")
-    
-    st.divider()
-    
-    # العدادات والتحكم (التي كانت في الكود الأول)
-    hr_val = st.slider("💓 Heart Rate (BPM)", 40, 190, 75)
-    steps_val = st.number_input("👟 Daily Step Count", 0, 30000, 5000)
-    
-    if st.button("🔄 Sync Telemetry"):
-        st.toast("Syncing with Local Database...")
-
-# --- مساحة العمل الرئيسية ---
-st.markdown('<h1 class="main-title">🛡️ LUNA CORE v2.0</h1>', unsafe_allow_html=True)
-
-col_left, col_right = st.columns([1.5, 1])
-
-with col_left:
-    st.markdown('<div class="luna-card">', unsafe_allow_html=True)
-    st.markdown("<h3 style='color:#00ff88; margin-top:0;'>🤖 AI VERDICT</h3>", unsafe_allow_html=True)
-    st.info("LUNA Intelligence: النظام مستقر، الأداء الحيوي ضمن النطاق الطبيعي لليوم.")
-    st.markdown('</div>', unsafe_allow_html=True)
-
-    # بوكس الذكاء الاصطناعي (Neural Chat)
-    st.markdown("### 🧠 Neural Chat Link")
-    if "messages" not in st.session_state:
-        st.session_state.messages = []
-        
-    chat_container = st.container(border=True)
-    with chat_container:
-        # هنا يتم عرض الرسائل كما في الكود المحلي السابق
-        for msg in st.session_state.messages:
-            st.chat_message(msg["role"]).write(msg["content"])
-            
-    if prompt := st.chat_input("Send command to LUNA..."):
-        st.session_state.messages.append({"role": "user", "content": prompt})
-        # محاكاة رد النظام
-        st.session_state.messages.append({"role": "assistant", "content": f"Recieved: {prompt}. Analysis complete."})
-        st.rerun()
-
-with col_right:
-    st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>📊 Metrics</h3>", unsafe_allow_html=True)
-    # هنا تضع كود الرسم البياني (Plotly) الذي قمنا بتعديله مسبقاً
-    st.caption("Historical Data visualization will appear here.")
-       
+# -------------------------------
+# 2. CoreBridge: جسر قاعدة البيانات والتحليلات
+# -------------------------------
 class CoreBridge:
     DB_PATH = "human_performance_v2.db"
 
     @staticmethod
     def init_db():
         conn = sqlite3.connect(CoreBridge.DB_PATH)
-        # إنشاء الجدول بالأعمدة الأربعة مباشرة
         conn.execute('''CREATE TABLE IF NOT EXISTS performance_logs 
                         (timestamp TEXT, performance_score REAL, hr INTEGER, steps INTEGER)''')
-        
-        # فحص ذكي لإضافة الأعمدة لو الجدول قديم (Migration)
-        cursor = conn.execute("PRAGMA table_info(performance_logs)")
-        columns = [column[1] for column in cursor.fetchall()]
-        if 'hr' not in columns:
-            conn.execute("ALTER TABLE performance_logs ADD COLUMN hr INTEGER DEFAULT 75")
-        if 'steps' not in columns:
-            conn.execute("ALTER TABLE performance_logs ADD COLUMN steps INTEGER DEFAULT 0")
         conn.commit()
         conn.close()
 
@@ -248,10 +56,10 @@ class CoreBridge:
         conn.close()
 
     @staticmethod
-    def fetch_historical_data():
+    def fetch_historical_data(limit: int = 20):
         try:
             conn = sqlite3.connect(CoreBridge.DB_PATH)
-            df = pd.read_sql_query("SELECT * FROM performance_logs ORDER BY timestamp DESC LIMIT 20", conn)
+            df = pd.read_sql_query(f"SELECT * FROM performance_logs ORDER BY timestamp DESC LIMIT {limit}", conn)
             conn.close()
             return df
         except Exception:
@@ -260,146 +68,279 @@ class CoreBridge:
     @staticmethod
     def get_luna_verdict(score, hr, steps):
         hr_advice = "🟢 نبض مستقر"
-        if hr > 110: hr_advice = "⚠️ معدل النبض مرتفع جداً؛ يرجى ممارسة تمارين التنفس"
-        elif hr < 50: hr_advice = "💤 النبض منخفض؛ قد تكون في حالة إرشادية أو خمول"
+        if hr > 110:
+            hr_advice = "⚠️ معدل النبض مرتفع جداً؛ يرجى ممارسة تمارين التنفس"
+        elif hr < 50:
+            hr_advice = "💤 النبض منخفض؛ قد تكون في حالة خمول"
         
         activity_advice = "🏃 استمر في التحرك لكسر حالة الخمول" if steps < 3000 else "💪 أداء حركي ممتاز"
         
-        if score >= 80: status = "🔥 أداؤك في القمة! النظام في حالة تناغم كامل"
-        elif score >= 50: status = "🟢 مستقر. حافظ على روتينك الحالي مع شرب الماء"
-        else: status = "🔴 يوصي بالراحة الآن LUNA تلاحظ تراجع في الأداء الحيوي"
+        if score >= 80:
+            status = "🔥 أداؤك في القمة!"
+        elif score >= 50:
+            status = "🟢 مستقر. حافظ على روتينك الحالي"
+        else:
+            status = "🔴 يوصى بالراحة الآن"
         
         return f"{status}\n\n{hr_advice}\n\n{activity_advice}"
+       # -------------------------------
+# PART 2/3
+# SIDEBAR CONTROL, SYNC LOGIC, DASHBOARD
+# -------------------------------
 
-# 3. INITIALIZATION
-SystemUI.setup()
-CoreBridge.init_db()
+# -------------------------------
+# 3. SidebarControl: عناصر التحكم في الشريط الجانبي
+# -------------------------------
+class SidebarControl:
+    @staticmethod
+    def render():
+        with st.sidebar:
+            st.markdown("<h2 style='color:#00ff88; font-family:Orbitron;'>🛡️ LUNA CORE</h2>", unsafe_allow_html=True)
+            
+            # مدخلات المستخدم
+            hr_val = st.slider("💓 Heart Rate (BPM)", 40, 190, 75)
+            step_val = st.number_input("👟 Daily Step Count", value=6000)
+            
+            # زر المزامنة
+            init_sync = st.button("🚀 INITIATE SYSTEM SYNC")
+            
+            return hr_val, step_val, init_sync
 
-# --- SIDEBAR CONTROL CENTER ---
-with st.sidebar:
-    st.markdown("<h2 style='color:#00ff88; font-family:Orbitron;'>🛡️ LUNA CORE</h2>", unsafe_allow_html=True)
-    auth_token = st.text_input("NEURAL ACCESS KEY", type="password", value="A7-X9-RAG-CORE-V10")
-    
-    st.divider()
-    st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>🤖 AI VERDICT</h3>", unsafe_allow_html=True)
-    
-    # استرجاع البيانات السابقة من الـ Session
-    luna_msg = st.session_state.get('last_verdict', "في انتظار مزامنة البيانات للتحليل...")
-    current_score = st.session_state.get('current_score', 0.0)
-    
-    st.markdown(f"""
-        <div style="background: rgba(0,255,136,0.1); border: 1px solid #00ff88; padding: 15px; border-radius: 10px; border-left: 5px solid #00ff88;">
-            <p style="color:#00ff88; font-weight:bold; margin-bottom:5px;">LUNA Intelligence:</p>
-            <p style="font-size:0.95em; color:white;">{luna_msg}</p>
-        </div>
-    """, unsafe_allow_html=True)
-    
-    st.divider()
-    st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>📡 TELEMETRY</h3>", unsafe_allow_html=True)
-    
-    hr_val = st.slider("💓 Heart Rate (BPM)", 40, 190, 75, key="unique_heart_rate_slider")
-    step_val = st.number_input("👟 Daily Step Count", value=6000)
-    
-    init_sync = st.button("🚀 INITIATE SYSTEM SYNC")
+# -------------------------------
+# 4. SyncLogic: منطق المزامنة والمعالجة
+# -------------------------------
+class SyncLogic:
+    @staticmethod
+    def process_sync(hr_val, step_val, init_sync):
+        if init_sync:
+            with st.spinner("Processing Neural Signals..."):
+                # توليد نتيجة عشوائية بين 30 و 95
+                generated_score = round(random.uniform(30, 95), 1)
+                
+                # حفظ النتيجة في session
+                st.session_state.current_score = generated_score
+                st.session_state.last_verdict = CoreBridge.get_luna_verdict(generated_score, hr_val, step_val)
+                
+                # حفظ النتيجة في قاعدة البيانات
+                CoreBridge.save_log(generated_score, hr_val, step_val)
+                
+                # إعادة تشغيل واجهة المستخدم لتحديث القيم
+                st.rerun()
 
-# --- SYNC LOGIC ---
-if init_sync:
-    with st.spinner("Processing Neural Signals..."):
-        generated_score = round(random.uniform(30, 95), 1)
-        st.session_state.current_score = generated_score
-        st.session_state.last_verdict = CoreBridge.get_luna_verdict(generated_score, hr_val, step_val)
-        CoreBridge.save_log(generated_score, hr_val, step_val)
-        st.rerun()
-        
-# --- 1. MAIN DASHBOARD AREA & TABS CONFIGURATION ---
-st.markdown("<h1 class='main-title'>Human Performance OS v2.0</h1>", unsafe_allow_html=True)
-st.markdown("<p style='text-align:center; color:#8b949e; margin-bottom:10px;'>Senior Engineer: Abdulrahman | Neural-Biometric Protocol Active</p>", unsafe_allow_html=True)
+# -------------------------------
+# 5. Dashboard: العرض الرئيسي، البطاقات، والـ Timeline
+# -------------------------------
+class Dashboard:
+    @staticmethod
+    def render(hr_val, step_val):
+        display_score = st.session_state.get('current_score', 50.0)
 
-# إضافة نظام التبويبات لدمج الـ Dashboard والشات
-tab_metrics, tab_ai = st.tabs(["📊 SYSTEM METRICS", "🤖 NEURAL CHAT LINK"])
-
-with tab_metrics:
-    # تقسيم الشاشة لعرض العداد والتحليل (نفس كودك الأصلي)
-    col_left, col_right = st.columns([1, 1.5], gap="large")
-
-    with col_left:
-        st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>🧠 Live Analysis</h3>", unsafe_allow_html=True)
-        
-        display_score = st.session_state.get('current_score', 46.6)
-        
+        # العداد الرئيسي للأداء
         fig_gauge = go.Figure(go.Indicator(
-            mode = "gauge+number",
-            value = display_score,
-            number = {'font': {'color': 'white', 'family': 'Orbitron'}},
-            gauge = {
-                'axis': {'range': [0, 100], 'tickcolor': "#00ff88"},
-                'bar': {'color': "#00ff88"},
-                'bgcolor': "rgba(0,0,0,0)",
-                'threshold': {
-                    'line': {'color': "red", 'width': 4},
-                    'thickness': 0.75,
-                    'value': display_score
-                }
-            }
+            mode="gauge+number",
+            value=display_score,
+            number={'font': {'color': 'white', 'family': 'Orbitron'}},
+            gauge={'axis': {'range': [0, 100], 'tickcolor': "#00ff88"}, 'bar': {'color': "#00ff88"}}
         ))
-            # 1. العداد وتنبيه الحالة (مرة واحدة فقط)
-    fig_gauge.update_layout(height=300, paper_bgcolor='rgba(0,0,0,0)', font={'color': "white"})
-    st.plotly_chart(fig_gauge, use_container_width=True, key="main_performance_gauge")
-    
-    if display_score < 50:
-        st.markdown("<p style='text-align:center; color:#ff4b4b; font-weight:bold;'>🔴 CRITICAL: تراجع في الأداء الحيوي</p>", unsafe_allow_html=True)
-    else:
-        st.markdown("<p style='text-align:center; color:#00ff88; font-weight:bold;'>🟢 OPTIMAL: حالة النظام مستقرة</p>", unsafe_allow_html=True)
+        fig_gauge.update_layout(height=300, paper_bgcolor='rgba(0,0,0,0)', font={'color': "white"})
+        st.plotly_chart(fig_gauge, use_container_width=True)
 
-    # 2. تنظيم التبويبات (الشات والبيانات)
-    tab_neural, tab_sys = st.tabs(["🤖 NEURAL LINK", "📊 SYSTEM METRICS"])
+        # تحديد لون البطاقة حسب القيم
+        hr_color = "#00ff88"
+        if hr_val > 110:
+            hr_color = "#ff4b4b"
+        elif hr_val < 50:
+            hr_color = "#4b9bff"
 
-    with tab_neural:
-        # هنا الشات والـ Timeline جنب بعض بشكل احترافي
-        col_chat, col_timeline = st.columns([2, 1])
-        
-        with col_chat:
-            luna_chat = LUNAChat()
-            luna_chat.render_ui()
+        step_color = "#00ff88"
+        if step_val < 3000:
+            step_color = "#ffa500"
 
-        with col_timeline:
+        perf_color = "#00ff88"
+        if display_score < 50:
+            perf_color = "#ff4b4b"
+        elif display_score >= 80:
+            perf_color = "#4bff4b"
+
+        # بطاقات إضافية لمعدل النبض والخطوات والأداء
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown(f"""
+                <div class='luna-card' style='border-left:5px solid {hr_color}; border-color:{hr_color};'>
+                    <h4 style='color:{hr_color}; font-family:Orbitron;'>💓 Heart Rate</h4>
+                    <p style='font-size:1.2em; color:white;'>{hr_val} BPM</p>
+                </div>
+            """, unsafe_allow_html=True)
+        with col2:
+            st.markdown(f"""
+                <div class='luna-card' style='border-left:5px solid {step_color}; border-color:{step_color};'>
+                    <h4 style='color:{step_color}; font-family:Orbitron;'>👟 Steps</h4>
+                    <p style='font-size:1.2em; color:white;'>{step_val} steps</p>
+                </div>
+            """, unsafe_allow_html=True)
+        with col3:
+            st.markdown(f"""
+                <div class='luna-card' style='border-left:5px solid {perf_color}; border-color:{perf_color};'>
+                    <h4 style='color:{perf_color}; font-family:Orbitron;'>⚡ Performance</h4>
+                    <p style='font-size:1.2em; color:white;'>{display_score} %</p>
+                </div>
+            """, unsafe_allow_html=True)
+
+        # الـ Timeline
+        hist_df = CoreBridge.fetch_historical_data()
+        if not hist_df.empty:
             st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>📈 Timeline</h3>", unsafe_allow_html=True)
-            hist_df = CoreBridge.fetch_historical_data()
-            if not hist_df.empty:
-                fig_line = px.area(hist_df.iloc[::-1], x='timestamp', y='performance_score')
-                fig_line.update_traces(
-                    line_color='#00ff88', 
-                    fillcolor='rgba(0, 255, 136, 0.1)', 
-                    marker=dict(size=8, color='#00ff88'), 
-                    line_width=3
-                )
-                fig_line.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=300, font={'color': "white"})
-                st.plotly_chart(fig_line, use_container_width=True, key="unique_performance_chart")
-            else:
-                st.info("No data yet.")
+            fig_line = px.area(hist_df.iloc[::-1], x='timestamp', y='performance_score')
+            fig_line.update_traces(line_color='#00ff88', fillcolor='rgba(0,255,136,0.1)', line_width=3)
+            fig_line.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=300, font={'color': "white"})
+            st.plotly_chart(fig_line, use_container_width=True)
+        else:
+            st.info("No data yet.")
+# -------------------------------
+# PART 3/3
+# NEURAL CHAT, BLUETOOTH MANAGER, MAIN APP
+# -------------------------------
+
+# -------------------------------
+# 6. NeuralChat: صندوق المحادثة مع LUNA + بطاقة Verdict
+# -------------------------------
+class NeuralChat:
+    @staticmethod
+    def render():
+        st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>🧠 Neural Chat Box</h3>", unsafe_allow_html=True)
+        
+        # بطاقة LUNA Verdict
+        verdict_msg = st.session_state.get('last_verdict', "في انتظار مزامنة البيانات...")
+        st.markdown(f"<div class='luna-card'><b>LUNA Verdict:</b><br>{verdict_msg}</div>", unsafe_allow_html=True)
+
+        # صندوق الشات
+        chat_container = st.container()
+        with chat_container:
+            if "messages" not in st.session_state:
+                st.session_state.messages = []
+            for msg in st.session_state.messages:
+                icon = "👤" if msg["role"] == "user" else "🤖"
+                st.markdown(f"<div style='padding:8px; border-bottom:1px solid #30363d;'><b>{icon}</b> {msg['content']}</div>", unsafe_allow_html=True)
+        
+        # إدخال رسالة جديدة
+        if prompt := st.chat_input("Send command to LUNA..."):
+            st.session_state.messages.append({"role": "user", "content": prompt})
+            # هنا يمكن ربط المنطق الحقيقي لمعالجة الأوامر؛ حالياً نرد برد تجريبي
+            assistant_reply = f"تم استلام الأمر: {prompt}. جاري التحليل..."
+            st.session_state.messages.append({"role": "assistant", "content": assistant_reply})
+            st.rerun()
+
+# -------------------------------
+# 7. BluetoothManager: إدارة المسح والاتصال عبر البلوتوث
+# -------------------------------
+class BluetoothManager:
+    @staticmethod
+    async def scan_devices():
+        """البحث عن أجهزة بلوتوث قريبة"""
+        devices = await BleakScanner.discover()
+        return devices
+
+    @staticmethod
+    async def connect_to_device(address):
+        """الاتصال بجهاز بلوتوث عبر العنوان"""
+        try:
+            async with BleakClient(address) as client:
+                if client.is_connected:
+                    return True, f"✅ Connected to {address}"
+                else:
+                    return False, f"❌ Failed to connect to {address}"
+        except Exception as e:
+            return False, f"⚠️ Error: {str(e)}"
+
+    @staticmethod
+    def render_ui():
+        """واجهة المستخدم للتحكم في البلوتوث داخل تبويب البلوتوث"""
+        st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>🔵 Bluetooth Protocol</h3>", unsafe_allow_html=True)
+        
+        # تفعيل/تعطيل الماسح
+        bt_status = st.checkbox("Enable Neural Link Scanner", value=False)
+        
+        if not bt_status:
+            st.info("Bluetooth scanner is offline.")
+            return
+
+        st.success("Neural Link Scanner active. You can scan for devices or connect by address.")
+        
+        # زر المسح
+        if st.button("🔍 Scan Devices"):
+            with st.spinner("Scanning for Bluetooth devices..."):
+                try:
+                    devices = asyncio.run(BluetoothManager.scan_devices())
+                    if devices:
+                        st.markdown("**Found devices:**")
+                        for d in devices:
+                            name = d.name or "Unknown"
+                            st.write(f"📡 {name} — {d.address}")
+                            # زر اتصال لكل جهاز
+                            if st.button(f"Connect to {d.address}", key=f"connect_{d.address}"):
+                                with st.spinner(f"Connecting to {d.address}..."):
+                                    success, msg = asyncio.run(BluetoothManager.connect_to_device(d.address))
+                                    if success:
+                                        st.success(msg)
+                                    else:
+                                        st.error(msg)
+                    else:
+                        st.warning("No devices found.")
+                except Exception as e:
+                    st.error(f"Bluetooth scan failed: {str(e)}")
+
+        # اتصال يدوي عبر العنوان
+        address_input = st.text_input("Or enter device address to connect (e.g., AA:BB:CC:DD:EE:FF)")
+        if address_input and st.button("Connect to Address"):
+            with st.spinner(f"Connecting to {address_input}..."):
+                try:
+                    success, msg = asyncio.run(BluetoothManager.connect_to_device(address_input))
+                    if success:
+                        st.success(msg)
+                    else:
+                        st.error(msg)
+                except Exception as e:
+                    st.error(f"Connection attempt failed: {str(e)}")
+
+# -------------------------------
+# 8. MainApp: ربط كل الكلاسات وتشغيل التطبيق
+# -------------------------------
+class MainApp:
+    @staticmethod
+    def run():
+        # 1. إعداد الواجهة
+        SystemUI.setup()
+        
+        # 2. تهيئة قاعدة البيانات
+        CoreBridge.init_db()
+        
+        # 3. عرض عناصر التحكم في الـ Sidebar
+        hr_val, step_val, init_sync = SidebarControl.render()
+        
+        # 4. تشغيل منطق المزامنة (إذا تم الضغط)
+        SyncLogic.process_sync(hr_val, step_val, init_sync)
+        
+        # 5. عرض العنوان الرئيسي
+        st.markdown("<h1 class='main-title'>Human Performance OS v2.0</h1>", unsafe_allow_html=True)
+        
+        # 6. إنشاء التبويبات (Metrics, Chat, Bluetooth)
+        tab_metrics, tab_chat, tab_bt = st.tabs(["📊 SYSTEM METRICS", "🤖 NEURAL CHAT", "🔵 BLUETOOTH"])
+        
+        # 7. عرض الـ Dashboard
+        with tab_metrics:
+            Dashboard.render(hr_val, step_val)
+        
+        # 8. عرض صندوق المحادثة
+        with tab_chat:
+            NeuralChat.render()
+        
+        # 9. عرض واجهة البلوتوث
+        with tab_bt:
+            BluetoothManager.render_ui()
 
 
-# --- 2. SYSTEM LOGS SECTION (Image 3 Style) ---
-st.divider()
-with st.expander("📂 VIEW SYSTEM DATABASE LOGS (SQLite3)"):
-    st.markdown("<h4 style='color:#00ff88; font-family:Orbitron;'>📜 RAW TELEMETRY DATA</h4>", unsafe_allow_html=True)
-    if not hist_df.empty:
-        # تنسيق الجدول ليكون داكناً واحترافياً
-        st.dataframe(
-            hist_df.style.format({"performance_score": "{:.1f}"}),
-            use_container_width=True
-        )
-    else:
-        st.write("Database is currently empty. Waiting for neural signal...")
-
-# --- 3. FINAL FOOTER ---
-st.markdown(f"""
-    <div style='text-align:center; margin-top:50px; padding:30px; color:#30363d; border-top:1px solid #161b22;'>
-        <p style='font-family:Orbitron; font-size:0.9em; color:#00ff88; opacity:0.6; letter-spacing: 2px;'>
-            LUNA CORE v10.0 | SOVEREIGN HUMAN OS
-        </p>
-        <p style='font-size:0.8em; font-family:JetBrains Mono;'>
-            ENCRYPTED BIOMETRIC GATEWAY • {datetime.now().year} • LEAD ENG. ABDULRAHMAN
-        </p>
-    </div>
-""", unsafe_allow_html=True)
+# -------------------------------
+# تشغيل التطبيق
+# -------------------------------
+if __name__ == "__main__":
+    MainApp.run()

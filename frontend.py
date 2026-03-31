@@ -1,18 +1,20 @@
 # -------------------------------
-# PART 1/3
-# LIBRARIES, UI CONFIG, DATABASE BRIDGE
+# PART 1/4
+# LIBRARIES, UI CONFIG, AUTH, BACKEND CONNECTOR
 # -------------------------------
 
-# المكتبات الأساسية (موجودة هنا في أول كلاس كما طلبت)
+# المكتبات الأساسية
 import streamlit as st
 import pandas as pd
 import sqlite3
 import plotly.graph_objects as go
 import plotly.express as px
+import requests
+import asyncio
 from datetime import datetime
 import random
-import asyncio
 from bleak import BleakScanner, BleakClient
+from typing import Tuple, Optional
 
 # -------------------------------
 # 1. SystemUI: إعداد الواجهة والمظهر العام
@@ -34,7 +36,131 @@ class SystemUI:
         """, unsafe_allow_html=True)
 
 # -------------------------------
-# 2. CoreBridge: جسر قاعدة البيانات والتحليلات
+# 2. AuthManager: تسجيل الدخول والخروج وإدارة التوكن
+# -------------------------------
+class AuthManager:
+    LOGIN_ENDPOINT = "http://localhost:8000/api/v2/auth/login"
+    REGISTER_ENDPOINT = "http://localhost:8000/api/v2/auth/register"
+
+    @staticmethod
+    def init_session():
+        if "auth" not in st.session_state:
+            st.session_state.auth = {"is_authenticated": False, "token": None, "user": None}
+
+    @staticmethod
+    def login(username: str, password: str) -> Tuple[bool, dict]:
+        AuthManager.init_session()
+        try:
+            resp = requests.post(AuthManager.LOGIN_ENDPOINT, data={"username": username, "password": password})
+            if resp.status_code == 200:
+                data = resp.json()
+                st.session_state.auth.update({
+                    "is_authenticated": True,
+                    "token": data.get("access_token"),
+                    "user": {"username": username}
+                })
+                return True, data
+            return False, {"error": resp.text}
+        except Exception as e:
+            return False, {"error": str(e)}
+
+    @staticmethod
+    def register(username: str, password: str) -> Tuple[bool, dict]:
+        try:
+            resp = requests.post(AuthManager.REGISTER_ENDPOINT, json={"username": username, "password": password})
+            if resp.status_code == 200:
+                return True, resp.json()
+            return False, {"error": resp.text}
+        except Exception as e:
+            return False, {"error": str(e)}
+
+    @staticmethod
+    def logout():
+        st.session_state.auth = {"is_authenticated": False, "token": None, "user": None}
+
+    @staticmethod
+    def is_authenticated() -> bool:
+        AuthManager.init_session()
+        return bool(st.session_state.auth.get("is_authenticated", False))
+
+    @staticmethod
+    def get_token() -> Optional[str]:
+        return st.session_state.auth.get("token")
+
+    @staticmethod
+    def get_auth_header() -> dict:
+        token = AuthManager.get_token()
+        return {"Authorization": f"Bearer {token}"} if token else {}
+
+    @staticmethod
+    def login_ui():
+        AuthManager.init_session()
+        if AuthManager.is_authenticated():
+            user = st.session_state.auth.get("user", {})
+            st.markdown(f"👋 مرحباً، **{user.get('username','User')}**")
+            if st.button("Sign Out"):
+                AuthManager.logout()
+                st.experimental_rerun()
+            return True
+        username = st.text_input("Username")
+        password = st.text_input("Password", type="password")
+        if st.button("Sign In"):
+            ok, resp = AuthManager.login(username, password)
+            if ok:
+                st.success("Signed in successfully.")
+                st.experimental_rerun()
+            else:
+                st.error(f"Login failed: {resp.get('error')}")
+        if st.button("Register"):
+            ok, resp = AuthManager.register(username, password)
+            if ok:
+                st.success("Registered successfully. Please login.")
+            else:
+                st.error(f"Register failed: {resp.get('error')}")
+        return False
+
+# -------------------------------
+# 3. BackendConnector: الاتصال بالباك اند
+# -------------------------------
+class BackendConnector:
+    BASE_URL = "http://localhost:8000/api/v2"
+
+    @staticmethod
+    def _full_url(path: str) -> str:
+        return f"{BackendConnector.BASE_URL.rstrip('/')}/{path.lstrip('/')}"
+
+    @staticmethod
+    def get(path: str, params: dict = None, require_auth: bool = True) -> Tuple[bool, dict]:
+        url = BackendConnector._full_url(path)
+        headers = {}
+        if require_auth:
+            headers.update(AuthManager.get_auth_header())
+        try:
+            resp = requests.get(url, params=params or {}, headers=headers)
+            resp.raise_for_status()
+            return True, resp.json()
+        except requests.RequestException as e:
+            return False, {"error": str(e)}
+
+    @staticmethod
+    def post(path: str, payload: dict = None, require_auth: bool = True) -> Tuple[bool, dict]:
+        url = BackendConnector._full_url(path)
+        headers = {"Content-Type": "application/json"}
+        if require_auth:
+            headers.update(AuthManager.get_auth_header())
+        try:
+            resp = requests.post(url, json=payload or {}, headers=headers)
+            resp.raise_for_status()
+            return True, resp.json()
+        except requests.RequestException as e:
+            return False, {"error": str(e)}
+            # -------------------------------
+# PART 2/4
+# CORE BRIDGE, SIDEBAR CONTROL, SYNC LOGIC, DASHBOARD
+# -------------------------------
+
+# -------------------------------
+# 4. CoreBridge: قاعدة البيانات المحلية (للتاريخ فقط)
 # -------------------------------
 class CoreBridge:
     DB_PATH = "human_performance_v2.db"
@@ -65,77 +191,55 @@ class CoreBridge:
         except Exception:
             return pd.DataFrame()
 
-    @staticmethod
-    def get_luna_verdict(score, hr, steps):
-        hr_advice = "🟢 نبض مستقر"
-        if hr > 110:
-            hr_advice = "⚠️ معدل النبض مرتفع جداً؛ يرجى ممارسة تمارين التنفس"
-        elif hr < 50:
-            hr_advice = "💤 النبض منخفض؛ قد تكون في حالة خمول"
-        
-        activity_advice = "🏃 استمر في التحرك لكسر حالة الخمول" if steps < 3000 else "💪 أداء حركي ممتاز"
-        
-        if score >= 80:
-            status = "🔥 أداؤك في القمة!"
-        elif score >= 50:
-            status = "🟢 مستقر. حافظ على روتينك الحالي"
-        else:
-            status = "🔴 يوصى بالراحة الآن"
-        
-        return f"{status}\n\n{hr_advice}\n\n{activity_advice}"
-       # -------------------------------
-# PART 2/3
-# SIDEBAR CONTROL, SYNC LOGIC, DASHBOARD
 # -------------------------------
-
-# -------------------------------
-# 3. SidebarControl: عناصر التحكم في الشريط الجانبي
+# 5. SidebarControl: عناصر التحكم في الشريط الجانبي
 # -------------------------------
 class SidebarControl:
     @staticmethod
     def render():
         with st.sidebar:
             st.markdown("<h2 style='color:#00ff88; font-family:Orbitron;'>🛡️ LUNA CORE</h2>", unsafe_allow_html=True)
-            
-            # مدخلات المستخدم
+            AuthManager.login_ui()
             hr_val = st.slider("💓 Heart Rate (BPM)", 40, 190, 75)
             step_val = st.number_input("👟 Daily Step Count", value=6000)
-            
-            # زر المزامنة
+            sleep_val = st.number_input("😴 Sleep Hours", value=7.0)
+            screen_val = st.number_input("📱 Screen Time (hrs)", value=3.0)
             init_sync = st.button("🚀 INITIATE SYSTEM SYNC")
-            
-            return hr_val, step_val, init_sync
+            return hr_val, step_val, sleep_val, screen_val, init_sync
 
 # -------------------------------
-# 4. SyncLogic: منطق المزامنة والمعالجة
+# 6. SyncLogic: المزامنة مع الباك اند
 # -------------------------------
 class SyncLogic:
     @staticmethod
-    def process_sync(hr_val, step_val, init_sync):
-        if init_sync:
+    def process_sync(hr_val, step_val, sleep_val, screen_val, init_sync):
+        if init_sync and AuthManager.is_authenticated():
             with st.spinner("Processing Neural Signals..."):
-                # توليد نتيجة عشوائية بين 30 و 95
-                generated_score = round(random.uniform(30, 95), 1)
-                
-                # حفظ النتيجة في session
-                st.session_state.current_score = generated_score
-                st.session_state.last_verdict = CoreBridge.get_luna_verdict(generated_score, hr_val, step_val)
-                
-                # حفظ النتيجة في قاعدة البيانات
-                CoreBridge.save_log(generated_score, hr_val, step_val)
-                
-                # إعادة تشغيل واجهة المستخدم لتحديث القيم
-                st.rerun()
+                payload = {
+                    "heart_rate": hr_val,
+                    "steps": step_val,
+                    "sleep_hours": sleep_val,
+                    "screen_time": screen_val
+                }
+                ok, resp = BackendConnector.post("performance/sync", payload=payload, require_auth=True)
+                if ok:
+                    score = resp.get("performance_score")
+                    insight = resp.get("ai_insight")
+                    st.session_state.current_score = score
+                    st.session_state.last_verdict = insight
+                    CoreBridge.save_log(score, hr_val, step_val)
+                    st.success("✅ Sync complete")
+                    st.rerun()
+                else:
+                    st.error(f"Sync failed: {resp.get('error')}")
 
 # -------------------------------
-# 5. Dashboard: العرض الرئيسي، البطاقات، والـ Timeline
+# 7. Dashboard: العرض الرئيسي
 # -------------------------------
 class Dashboard:
     @staticmethod
     def render(hr_val, step_val):
         display_score = st.session_state.get('current_score', 50.0)
-
-        # العداد الرئيسي للأداء
         fig_gauge = go.Figure(go.Indicator(
             mode="gauge+number",
             value=display_score,
@@ -145,64 +249,30 @@ class Dashboard:
         fig_gauge.update_layout(height=300, paper_bgcolor='rgba(0,0,0,0)', font={'color': "white"})
         st.plotly_chart(fig_gauge, use_container_width=True)
 
-        # تحديد لون البطاقة حسب القيم
-        hr_color = "#00ff88"
-        if hr_val > 110:
-            hr_color = "#ff4b4b"
-        elif hr_val < 50:
-            hr_color = "#4b9bff"
-
-        step_color = "#00ff88"
-        if step_val < 3000:
-            step_color = "#ffa500"
-
-        perf_color = "#00ff88"
-        if display_score < 50:
-            perf_color = "#ff4b4b"
-        elif display_score >= 80:
-            perf_color = "#4bff4b"
-
-        # بطاقات إضافية لمعدل النبض والخطوات والأداء
         col1, col2, col3 = st.columns(3)
         with col1:
-            st.markdown(f"""
-                <div class='luna-card' style='border-left:5px solid {hr_color}; border-color:{hr_color};'>
-                    <h4 style='color:{hr_color}; font-family:Orbitron;'>💓 Heart Rate</h4>
-                    <p style='font-size:1.2em; color:white;'>{hr_val} BPM</p>
-                </div>
-            """, unsafe_allow_html=True)
+            st.markdown(f"<div class='luna-card'><h4>💓 Heart Rate</h4><p>{hr_val} BPM</p></div>", unsafe_allow_html=True)
         with col2:
-            st.markdown(f"""
-                <div class='luna-card' style='border-left:5px solid {step_color}; border-color:{step_color};'>
-                    <h4 style='color:{step_color}; font-family:Orbitron;'>👟 Steps</h4>
-                    <p style='font-size:1.2em; color:white;'>{step_val} steps</p>
-                </div>
-            """, unsafe_allow_html=True)
+            st.markdown(f"<div class='luna-card'><h4>👟 Steps</h4><p>{step_val} steps</p></div>", unsafe_allow_html=True)
         with col3:
-            st.markdown(f"""
-                <div class='luna-card' style='border-left:5px solid {perf_color}; border-color:{perf_color};'>
-                    <h4 style='color:{perf_color}; font-family:Orbitron;'>⚡ Performance</h4>
-                    <p style='font-size:1.2em; color:white;'>{display_score} %</p>
-                </div>
-            """, unsafe_allow_html=True)
+            st.markdown(f"<div class='luna-card'><h4>⚡ Performance</h4><p>{display_score} %</p></div>", unsafe_allow_html=True)
 
-        # الـ Timeline
         hist_df = CoreBridge.fetch_historical_data()
         if not hist_df.empty:
-            st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>📈 Timeline</h3>", unsafe_allow_html=True)
+            st.markdown("<h3 style='color:#00ff88;'>📈 Timeline</h3>", unsafe_allow_html=True)
             fig_line = px.area(hist_df.iloc[::-1], x='timestamp', y='performance_score')
             fig_line.update_traces(line_color='#00ff88', fillcolor='rgba(0,255,136,0.1)', line_width=3)
             fig_line.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=300, font={'color': "white"})
             st.plotly_chart(fig_line, use_container_width=True)
         else:
             st.info("No data yet.")
-# -------------------------------
-# PART 3/3
-# NEURAL CHAT, BLUETOOTH MANAGER, MAIN APP
+            # -------------------------------
+# PART 3/4
+# NEURAL CHAT, BLUETOOTH MANAGER
 # -------------------------------
 
 # -------------------------------
-# 6. NeuralChat: صندوق المحادثة مع LUNA + بطاقة Verdict
+# 8. NeuralChat: صندوق المحادثة مع LUNA + بطاقة Verdict
 # -------------------------------
 class NeuralChat:
     @staticmethod
@@ -225,13 +295,12 @@ class NeuralChat:
         # إدخال رسالة جديدة
         if prompt := st.chat_input("Send command to LUNA..."):
             st.session_state.messages.append({"role": "user", "content": prompt})
-            # هنا يمكن ربط المنطق الحقيقي لمعالجة الأوامر؛ حالياً نرد برد تجريبي
             assistant_reply = f"تم استلام الأمر: {prompt}. جاري التحليل..."
             st.session_state.messages.append({"role": "assistant", "content": assistant_reply})
             st.rerun()
 
 # -------------------------------
-# 7. BluetoothManager: إدارة المسح والاتصال عبر البلوتوث
+# 9. BluetoothManager: إدارة المسح والاتصال عبر البلوتوث
 # -------------------------------
 class BluetoothManager:
     @staticmethod
@@ -257,7 +326,6 @@ class BluetoothManager:
         """واجهة المستخدم للتحكم في البلوتوث داخل تبويب البلوتوث"""
         st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>🔵 Bluetooth Protocol</h3>", unsafe_allow_html=True)
         
-        # تفعيل/تعطيل الماسح
         bt_status = st.checkbox("Enable Neural Link Scanner", value=False)
         
         if not bt_status:
@@ -266,7 +334,6 @@ class BluetoothManager:
 
         st.success("Neural Link Scanner active. You can scan for devices or connect by address.")
         
-        # زر المسح
         if st.button("🔍 Scan Devices"):
             with st.spinner("Scanning for Bluetooth devices..."):
                 try:
@@ -276,7 +343,6 @@ class BluetoothManager:
                         for d in devices:
                             name = d.name or "Unknown"
                             st.write(f"📡 {name} — {d.address}")
-                            # زر اتصال لكل جهاز
                             if st.button(f"Connect to {d.address}", key=f"connect_{d.address}"):
                                 with st.spinner(f"Connecting to {d.address}..."):
                                     success, msg = asyncio.run(BluetoothManager.connect_to_device(d.address))
@@ -289,7 +355,6 @@ class BluetoothManager:
                 except Exception as e:
                     st.error(f"Bluetooth scan failed: {str(e)}")
 
-        # اتصال يدوي عبر العنوان
         address_input = st.text_input("Or enter device address to connect (e.g., AA:BB:CC:DD:EE:FF)")
         if address_input and st.button("Connect to Address"):
             with st.spinner(f"Connecting to {address_input}..."):
@@ -301,40 +366,41 @@ class BluetoothManager:
                         st.error(msg)
                 except Exception as e:
                     st.error(f"Connection attempt failed: {str(e)}")
+                    # -------------------------------
+# PART 4/4
+# MAIN APP
+# -------------------------------
 
-# -------------------------------
-# 8. MainApp: ربط كل الكلاسات وتشغيل التطبيق
-# -------------------------------
 class MainApp:
     @staticmethod
     def run():
         # 1. إعداد الواجهة
         SystemUI.setup()
-        
+
         # 2. تهيئة قاعدة البيانات
         CoreBridge.init_db()
-        
-        # 3. عرض عناصر التحكم في الـ Sidebar
-        hr_val, step_val, init_sync = SidebarControl.render()
-        
-        # 4. تشغيل منطق المزامنة (إذا تم الضغط)
-        SyncLogic.process_sync(hr_val, step_val, init_sync)
-        
-        # 5. عرض العنوان الرئيسي
+
+        # 3. عناصر التحكم في الـ Sidebar (مع تسجيل الدخول)
+        hr_val, step_val, sleep_val, screen_val, init_sync = SidebarControl.render()
+
+        # 4. تشغيل منطق المزامنة
+        SyncLogic.process_sync(hr_val, step_val, sleep_val, screen_val, init_sync)
+
+        # 5. العنوان الرئيسي
         st.markdown("<h1 class='main-title'>Human Performance OS v2.0</h1>", unsafe_allow_html=True)
-        
-        # 6. إنشاء التبويبات (Metrics, Chat, Bluetooth)
+
+        # 6. إنشاء التبويبات
         tab_metrics, tab_chat, tab_bt = st.tabs(["📊 SYSTEM METRICS", "🤖 NEURAL CHAT", "🔵 BLUETOOTH"])
-        
+
         # 7. عرض الـ Dashboard
         with tab_metrics:
             Dashboard.render(hr_val, step_val)
-        
+
         # 8. عرض صندوق المحادثة
         with tab_chat:
             NeuralChat.render()
-        
-        # 9. عرض واجهة البلوتوث
+
+        # 9. عرض البلوتوث
         with tab_bt:
             BluetoothManager.render_ui()
 

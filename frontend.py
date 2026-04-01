@@ -1,31 +1,45 @@
 # streamlit_app_with_facepanel.py
-# Human Performance OS - Streamlit UI with FacePanel integration (FacePanel replaced with PIL-based implementation)
-# Integrated FacePanel: decision badge, confidence, explain, agent icons, feedback buttons
-# Note: This version avoids cairosvg and external TTF dependencies for better portability.
+# Human Performance OS - Streamlit UI with FacePanel integration (PIL-based, no cairosvg)
+# Includes client integration to FastAPI orchestrator (POST /decision/evaluate, WS /ws/decisions/{id})
 
-# -------------------------------
-# PART 1/4
-# LIBRARIES, UI CONFIG, AUTH, BACKEND CONNECTOR
-# -------------------------------
+import os
+import io
+import json
+import time
+import threading
+import asyncio
+from typing import Tuple, Optional, Dict, Any
 
-# المكتبات الأساسية
 import streamlit as st
 import pandas as pd
 import sqlite3
-import plotly.graph_objects as go
-import plotly.express as px
 import requests
-import asyncio
 from datetime import datetime
-import random
-from bleak import BleakScanner, BleakClient
-from typing import Tuple, Optional, Dict, Any
 from PIL import Image, ImageDraw, ImageFont
-import io
-import os
+
+# Optional: BLE features (keep if installed)
+try:
+    from bleak import BleakScanner, BleakClient
+    BLE_AVAILABLE = True
+except Exception:
+    BLE_AVAILABLE = False
+
+# WebSocket client for background listener
+try:
+    import websocket  # pip install websocket-client
+    WS_CLIENT_AVAILABLE = True
+except Exception:
+    WS_CLIENT_AVAILABLE = False
 
 # -------------------------------
-# 1. SystemUI: إعداد الواجهة والمظهر العام
+# Configuration
+# -------------------------------
+API_BASE = os.environ.get("HPOS_API_BASE", "http://localhost:8000")  # FastAPI base
+WS_BASE = API_BASE.replace("http://", "ws://").replace("https://", "wss://")
+DB_PATH = "human_performance_v2.db"
+
+# -------------------------------
+# System UI
 # -------------------------------
 class SystemUI:
     @staticmethod
@@ -38,35 +52,33 @@ class SystemUI:
             .stApp { background-color: var(--bg); color: #e6edf3; font-family: 'JetBrains Mono', monospace; }
             section[data-testid="stSidebar"] { background-color: var(--sidebar-bg) !important; border-right: 1px solid #30363d; }
             .main-title { font-family: 'Orbitron', sans-serif; color: var(--primary); text-shadow: 0 0 20px rgba(0,255,136,0.4); font-size: 2.5em; text-align: center; margin-bottom: 20px; }
-            .chat-box { border: 1px solid #30363d; border-radius: 12px; padding: 15px; background: rgba(0,0,0,0.3); height: 400px; overflow-y: auto; }
-            .luna-card { background: rgba(0,255,136,0.1); border: 1px solid #00ff88; padding: 15px; border-radius: 10px; border-left: 5px solid #00ff88; margin-bottom: 15px; }
+            .luna-card { background: rgba(0,255,136,0.06); border: 1px solid #00ff88; padding: 12px; border-radius: 10px; margin-bottom: 12px; }
             </style>
         """, unsafe_allow_html=True)
 
 # -------------------------------
-# 2. AuthManager: تسجيل الدخول والخروج وإدارة التوكن
+# AuthManager (lightweight)
 # -------------------------------
 class AuthManager:
-    LOGIN_ENDPOINT = "http://localhost:8000/api/v2/auth/login"
-    REGISTER_ENDPOINT = "http://localhost:8000/api/v2/auth/register"
+    LOGIN_ENDPOINT = f"{API_BASE}/auth/login"
+    REGISTER_ENDPOINT = f"{API_BASE}/auth/register"
 
     @staticmethod
     def init_session():
         if "auth" not in st.session_state:
-            st.session_state.auth = {"is_authenticated": False, "token": None, "user": None}
+            st.session_state.auth = {"is_authenticated": False, "token": None, "user": {}}
 
     @staticmethod
     def login(username: str, password: str) -> Tuple[bool, dict]:
         AuthManager.init_session()
         try:
-            resp = requests.post(AuthManager.LOGIN_ENDPOINT, data={"username": username, "password": password})
+            resp = requests.post(AuthManager.LOGIN_ENDPOINT, data={"username": username, "password": password}, timeout=8)
             if resp.status_code == 200:
                 data = resp.json()
-                # store token and minimal user info; backend token may include user_id
                 st.session_state.auth.update({
                     "is_authenticated": True,
                     "token": data.get("access_token"),
-                    "user": {"username": username}
+                    "user": {"username": username, "id": data.get("user_id")}
                 })
                 return True, data
             return False, {"error": resp.text}
@@ -74,18 +86,8 @@ class AuthManager:
             return False, {"error": str(e)}
 
     @staticmethod
-    def register(username: str, password: str) -> Tuple[bool, dict]:
-        try:
-            resp = requests.post(AuthManager.REGISTER_ENDPOINT, json={"username": username, "password": password})
-            if resp.status_code == 200:
-                return True, resp.json()
-            return False, {"error": resp.text}
-        except Exception as e:
-            return False, {"error": str(e)}
-
-    @staticmethod
     def logout():
-        st.session_state.auth = {"is_authenticated": False, "token": None, "user": None}
+        st.session_state.auth = {"is_authenticated": False, "token": None, "user": {}}
 
     @staticmethod
     def is_authenticated() -> bool:
@@ -94,6 +96,7 @@ class AuthManager:
 
     @staticmethod
     def get_token() -> Optional[str]:
+        AuthManager.init_session()
         return st.session_state.auth.get("token")
 
     @staticmethod
@@ -113,26 +116,32 @@ class AuthManager:
             return True
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
-        if st.button("Sign In"):
-            ok, resp = AuthManager.login(username, password)
-            if ok:
-                st.success("Signed in successfully.")
-                st.experimental_rerun()
-            else:
-                st.error(f"Login failed: {resp.get('error')}")
-        if st.button("Register"):
-            ok, resp = AuthManager.register(username, password)
-            if ok:
-                st.success("Registered successfully. Please login.")
-            else:
-                st.error(f"Register failed: {resp.get('error')}")
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("Sign In"):
+                ok, resp = AuthManager.login(username, password)
+                if ok:
+                    st.success("Signed in successfully.")
+                    st.experimental_rerun()
+                else:
+                    st.error(f"Login failed: {resp.get('error')}")
+        with col2:
+            if st.button("Register"):
+                try:
+                    resp = requests.post(AuthManager.REGISTER_ENDPOINT, json={"username": username, "password": password}, timeout=8)
+                    if resp.status_code == 200:
+                        st.success("Registered successfully. Please login.")
+                    else:
+                        st.error(f"Register failed: {resp.text}")
+                except Exception as e:
+                    st.error(f"Register error: {e}")
         return False
 
 # -------------------------------
-# 3. BackendConnector: الاتصال بالباك اند
+# BackendConnector (simple wrapper)
 # -------------------------------
 class BackendConnector:
-    BASE_URL = "http://localhost:8000/api/v2"
+    BASE_URL = API_BASE
 
     @staticmethod
     def _full_url(path: str) -> str:
@@ -145,10 +154,10 @@ class BackendConnector:
         if require_auth:
             headers.update(AuthManager.get_auth_header())
         try:
-            resp = requests.get(url, params=params or {}, headers=headers)
+            resp = requests.get(url, params=params or {}, headers=headers, timeout=10)
             resp.raise_for_status()
             return True, resp.json()
-        except requests.RequestException as e:
+        except Exception as e:
             return False, {"error": str(e)}
 
     @staticmethod
@@ -158,22 +167,17 @@ class BackendConnector:
         if require_auth:
             headers.update(AuthManager.get_auth_header())
         try:
-            resp = requests.post(url, json=payload or {}, headers=headers)
+            resp = requests.post(url, json=payload or {}, headers=headers, timeout=15)
             resp.raise_for_status()
             return True, resp.json()
-        except requests.RequestException as e:
+        except Exception as e:
             return False, {"error": str(e)}
 
 # -------------------------------
-# PART 2/4
-# CORE BRIDGE, SIDEBAR CONTROL, SYNC LOGIC, DASHBOARD
-# -------------------------------
-
-# -------------------------------
-# 4. CoreBridge: قاعدة البيانات المحلية (للتاريخ فقط)
+# CoreBridge (local DB logs)
 # -------------------------------
 class CoreBridge:
-    DB_PATH = "human_performance_v2.db"
+    DB_PATH = DB_PATH
 
     @staticmethod
     def init_db():
@@ -202,7 +206,7 @@ class CoreBridge:
             return pd.DataFrame()
 
 # -------------------------------
-# 5. SidebarControl: عناصر التحكم في الشريط الجانبي
+# SidebarControl
 # -------------------------------
 class SidebarControl:
     @staticmethod
@@ -218,7 +222,7 @@ class SidebarControl:
             return hr_val, step_val, sleep_val, screen_val, init_sync
 
 # -------------------------------
-# 6. SyncLogic: المزامنة مع الباك اند
+# SyncLogic (calls backend sync endpoint)
 # -------------------------------
 class SyncLogic:
     @staticmethod
@@ -233,7 +237,6 @@ class SyncLogic:
                 }
                 ok, resp = BackendConnector.post("performance/sync", payload=payload, require_auth=True)
                 if ok:
-                    # backend may return performance_score and ai_insight
                     score = resp.get("performance_score") or resp.get("score") or 50.0
                     insight = resp.get("ai_insight") or resp.get("insight") or resp.get("ai_recommendation")
                     st.session_state.current_score = score
@@ -245,8 +248,11 @@ class SyncLogic:
                     st.error(f"Sync failed: {resp.get('error')}")
 
 # -------------------------------
-# 7. Dashboard: العرض الرئيسي
+# Dashboard
 # -------------------------------
+import plotly.graph_objects as go
+import plotly.express as px
+
 class Dashboard:
     @staticmethod
     def render(hr_val, step_val):
@@ -279,32 +285,21 @@ class Dashboard:
             st.info("No data yet.")
 
 # -------------------------------
-# PART 3/4
-# NEURAL CHAT, BLUETOOTH MANAGER
-# -------------------------------
-
-# -------------------------------
-# 8. NeuralChat: صندوق المحادثة مع LUNA + بطاقة Verdict
+# NeuralChat (simple)
 # -------------------------------
 class NeuralChat:
     @staticmethod
     def render():
         st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>🧠 Neural Chat Box</h3>", unsafe_allow_html=True)
-        
-        # بطاقة LUNA Verdict
         verdict_msg = st.session_state.get('last_verdict', "في انتظار مزامنة البيانات...")
         st.markdown(f"<div class='luna-card'><b>LUNA Verdict:</b><br>{verdict_msg}</div>", unsafe_allow_html=True)
 
-        # صندوق الشات
-        chat_container = st.container()
-        with chat_container:
-            if "messages" not in st.session_state:
-                st.session_state.messages = []
-            for msg in st.session_state.messages:
-                icon = "👤" if msg["role"] == "user" else "🤖"
-                st.markdown(f"<div style='padding:8px; border-bottom:1px solid #30363d;'><b>{icon}</b> {msg['content']}</div>", unsafe_allow_html=True)
-        
-        # إدخال رسالة جديدة
+        if "messages" not in st.session_state:
+            st.session_state.messages = []
+        for msg in st.session_state.messages:
+            icon = "👤" if msg["role"] == "user" else "🤖"
+            st.markdown(f"<div style='padding:8px; border-bottom:1px solid #30363d;'><b>{icon}</b> {msg['content']}</div>", unsafe_allow_html=True)
+
         if prompt := st.chat_input("Send command to LUNA..."):
             st.session_state.messages.append({"role": "user", "content": prompt})
             assistant_reply = f"تم استلام الأمر: {prompt}. جاري التحليل..."
@@ -312,18 +307,20 @@ class NeuralChat:
             st.rerun()
 
 # -------------------------------
-# 9. BluetoothManager: إدارة المسح والاتصال عبر البلوتوث
+# BluetoothManager (optional)
 # -------------------------------
 class BluetoothManager:
     @staticmethod
     async def scan_devices():
-        """البحث عن أجهزة بلوتوث قريبة"""
+        if not BLE_AVAILABLE:
+            return []
         devices = await BleakScanner.discover()
         return devices
 
     @staticmethod
     async def connect_to_device(address):
-        """الاتصال بجهاز بلوتوث عبر العنوان"""
+        if not BLE_AVAILABLE:
+            return False, "BLE not available"
         try:
             async with BleakClient(address) as client:
                 if client.is_connected:
@@ -335,17 +332,12 @@ class BluetoothManager:
 
     @staticmethod
     def render_ui():
-        """واجهة المستخدم للتحكم في البلوتوث داخل تبويب البلوتوث"""
         st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>🔵 Bluetooth Protocol</h3>", unsafe_allow_html=True)
-        
         bt_status = st.checkbox("Enable Neural Link Scanner", value=False)
-        
         if not bt_status:
             st.info("Bluetooth scanner is offline.")
             return
-
-        st.success("Neural Link Scanner active. You can scan for devices or connect by address.")
-        
+        st.success("Neural Link Scanner active.")
         if st.button("🔍 Scan Devices"):
             with st.spinner("Scanning for Bluetooth devices..."):
                 try:
@@ -367,28 +359,15 @@ class BluetoothManager:
                 except Exception as e:
                     st.error(f"Bluetooth scan failed: {str(e)}")
 
-        address_input = st.text_input("Or enter device address to connect (e.g., AA:BB:CC:DD:EE:FF)")
-        if address_input and st.button("Connect to Address"):
-            with st.spinner(f"Connecting to {address_input}..."):
-                try:
-                    success, msg = asyncio.run(BluetoothManager.connect_to_device(address_input))
-                    if success:
-                        st.success(msg)
-                    else:
-                        st.error(msg)
-                except Exception as e:
-                    st.error(f"Connection attempt failed: {str(e)}")
-
 # -------------------------------
-# FacePanel: PIL-based implementation (no cairosvg dependency)
+# FacePanel (PIL-based, no cairosvg)
 # -------------------------------
 class FacePanel:
-    ICONS_DIR = "assets/icons"  # اختياري: ضع أيقونات PNG هنا باسم health.png, productivity.png
+    ICONS_DIR = "assets/icons"
     DEFAULT_SIZE = (900, 600)
 
     @staticmethod
     def _load_icon(name: str, size=(36,36)):
-        """حاول تحميل أيقونة PNG من assets/icons، وإلا ارجع None."""
         path = os.path.join(FacePanel.ICONS_DIR, f"{name}.png")
         try:
             if os.path.exists(path):
@@ -401,15 +380,11 @@ class FacePanel:
 
     @staticmethod
     def _draw_confidence_ring(draw: ImageDraw.Draw, center, radius, confidence, color=(0,255,136,200)):
-        """ارسم حلقة ثقة بسيطة باستخدام pieslice وinner circle."""
         cx, cy = center
         bbox = [cx-radius, cy-radius, cx+radius, cy+radius]
-        # خلفية داكنة
         draw.ellipse(bbox, fill=(0,0,0,160))
-        # جزء النسبة
         end_angle = int(360 * max(0.0, min(1.0, confidence)))
         draw.pieslice(bbox, start=-90, end=-90+end_angle, fill=color)
-        # inner circle لعمل حلقة
         inner = int(radius * 0.6)
         draw.ellipse([cx-inner, cy-inner, cx+inner, cy+inner], fill=(0,0,0,0))
 
@@ -432,14 +407,9 @@ class FacePanel:
 
     @staticmethod
     def render(image_path: Optional[str] = None, decision: Optional[Dict[str, Any]] = None, user_id: Optional[int] = None):
-        """
-        Returns PNG bytes of composed face HUD.
-        Use in Streamlit: st.image(FacePanel.render(...), use_column_width=True)
-        """
         w, h = FacePanel.DEFAULT_SIZE
         base = Image.new("RGBA", (w, h), (10, 12, 15, 255))
 
-        # وضع صورة الوجه أو placeholder
         try:
             if image_path and os.path.exists(image_path):
                 face = Image.open(image_path).convert("RGBA")
@@ -460,7 +430,6 @@ class FacePanel:
         overlay = Image.new("RGBA", base.size, (0,0,0,0))
         draw = ImageDraw.Draw(overlay)
 
-        # خطوط افتراضية مع fallback
         try:
             font_b = ImageFont.truetype("DejaVuSans-Bold.ttf", 18)
             font_s = ImageFont.truetype("DejaVuSans.ttf", 14)
@@ -468,12 +437,10 @@ class FacePanel:
             font_b = ImageFont.load_default()
             font_s = ImageFont.load_default()
 
-        # بيانات القرار الافتراضية
         badge_text = decision.get("decision_type", "No decision") if decision else "No decision"
         confidence_val = float(decision.get("confidence", 0.0)) if decision else 0.0
         explain = decision.get("reason", "Awaiting sync...") if decision else "No explanation yet."
 
-        # شارة القرار أعلى يسار
         bx, by = 30, 20
         padding = (12, 8)
         tw, th = draw.textsize(badge_text, font=font_b)
@@ -481,14 +448,12 @@ class FacePanel:
         draw.rounded_rectangle(rect, radius=10, fill=(0,0,0,160), outline=(0,255,136,200), width=2)
         draw.text((rect[0]+padding[0], rect[1]+padding[1]), badge_text, font=font_b, fill=(0,255,136,255))
 
-        # مقياس الثقة أعلى يمين
         ring_center = (w - 90, 70)
         FacePanel._draw_confidence_ring(draw, ring_center, radius=48, confidence=confidence_val, color=(0,255,136,200))
         pct_text = f"{int(confidence_val*100)}%"
         tw2, th2 = draw.textsize(pct_text, font=font_b)
         draw.text((ring_center[0]-tw2/2, ring_center[1]-th2/2), pct_text, font=font_b, fill=(255,255,255,230))
 
-        # أيقونات الوكلاء على الجانب الأيسر
         icons = [("health", "Health", "HR ok"), ("productivity", "Productivity", "Focus stable")]
         ix, iy = 30, 120
         for key, title, summary in icons:
@@ -505,7 +470,6 @@ class FacePanel:
             draw.text((text_x, iy+22), summary, font=font_s, fill=(180,230,200,220))
             iy += 56
 
-        # شريط الشرح أسفل الصورة
         bar_h = 84
         rect2 = [30, h - bar_h - 20, w - 30, h - 20]
         draw.rounded_rectangle(rect2, radius=10, fill=(0,0,0,160))
@@ -516,7 +480,6 @@ class FacePanel:
             draw.text((rect2[0]+10, y_text), ln, font=font_s, fill=(230,238,243,255))
             y_text += draw.textsize(ln, font=font_s)[1] + 4
 
-        # لوحة تاريخ قرارات صغيرة على اليمين
         hist_box = [w-260, 120, w-40, 260]
         draw.rounded_rectangle(hist_box, radius=10, fill=(0,0,0,120), outline=(0,255,136,80))
         draw.text((hist_box[0]+10, hist_box[1]+8), "Recent decisions", font=font_b, fill=(0,255,136,255))
@@ -532,10 +495,7 @@ class FacePanel:
                 draw.text((hist_box[0]+10, yy), f"{ts} • {typ} • {confs}", font=font_s, fill=(220,240,230,230))
                 yy += 22
 
-        # دمج overlay مع base
         composed = Image.alpha_composite(base, overlay)
-
-        # إرجاع بايت PNG جاهز للعرض
         buf = io.BytesIO()
         composed.save(buf, format="PNG")
         buf.seek(0)
@@ -559,50 +519,113 @@ class FacePanel:
             st.error(f"Feedback failed: {resp.get('error')}")
 
 # -------------------------------
-# PART 4/4
-# MAIN APP
+# Client integration: submit evaluation + WS listener + polling fallback
 # -------------------------------
+def submit_evaluation_to_backend(payload: dict) -> dict:
+    try:
+        ok, resp = BackendConnector.post("decision/evaluate", payload=payload, require_auth=True)
+        if ok:
+            return {"ok": True, "decision_id": resp.get("decision_id")}
+        return {"ok": False, "error": resp.get("error")}
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
 
+def poll_decision_status(decision_id: str, timeout: int = 60) -> dict:
+    start = time.time()
+    while time.time() - start < timeout:
+        ok, resp = BackendConnector.get(f"decision/{decision_id}/status", require_auth=True)
+        if ok:
+            status = resp.get("status")
+            if status == "done":
+                ok2, rec = BackendConnector.get(f"decision/{decision_id}", require_auth=True)
+                if ok2:
+                    return {"status":"done", "decision": rec.get("final_decision") or rec.get("final_decision", {})}
+        time.sleep(1.5)
+    return {"status":"timeout"}
+
+def _ws_thread(decision_id: str):
+    if not WS_CLIENT_AVAILABLE:
+        return
+    url = f"{WS_BASE}/ws/decisions/{decision_id}"
+    def on_message(ws, message):
+        try:
+            data = json.loads(message)
+            if data.get("status") == "done":
+                st.session_state.face_result = data.get("decision")
+                st.session_state.face_stage = "done"
+                try:
+                    st.experimental_rerun()
+                except Exception:
+                    pass
+        except Exception:
+            pass
+    def on_error(ws, error):
+        pass
+    def on_close(ws, close_status_code, close_msg):
+        pass
+    def on_open(ws):
+        pass
+    try:
+        ws = websocket.WebSocketApp(url, on_message=on_message, on_error=on_error, on_close=on_close, on_open=on_open)
+        ws.run_forever()
+    except Exception:
+        pass
+
+def evaluate_face_flow(hr_val, step_val, sleep_val, screen_val, image_path=None):
+    payload = {"user_id": None, "hr": hr_val, "steps": step_val, "sleep_hours": sleep_val, "screen_time": screen_val}
+    submit_resp = submit_evaluation_to_backend(payload)
+    if not submit_resp.get("ok"):
+        st.error(f"Submit failed: {submit_resp.get('error')}")
+        return None
+    decision_id = submit_resp.get("decision_id")
+    st.session_state.face_stage = "queued"
+    st.session_state.face_decision_id = decision_id
+    try:
+        t = threading.Thread(target=_ws_thread, args=(decision_id,), daemon=True)
+        t.start()
+    except Exception:
+        pass
+    def poll_fallback():
+        res = poll_decision_status(decision_id, timeout=30)
+        if res.get("status") == "done":
+            st.session_state.face_result = res.get("decision")
+            st.session_state.face_stage = "done"
+            try:
+                st.experimental_rerun()
+            except Exception:
+                pass
+    threading.Thread(target=poll_fallback, daemon=True).start()
+    return decision_id
+
+# -------------------------------
+# MainApp
+# -------------------------------
 class MainApp:
     @staticmethod
     def run():
-        # 1. إعداد الواجهة
         SystemUI.setup()
-
-        # 2. تهيئة قاعدة البيانات
         CoreBridge.init_db()
 
-        # 3. عناصر التحكم في الـ Sidebar (مع تسجيل الدخول)
         hr_val, step_val, sleep_val, screen_val, init_sync = SidebarControl.render()
-
-        # 4. تشغيل منطق المزامنة
         SyncLogic.process_sync(hr_val, step_val, sleep_val, screen_val, init_sync)
 
-        # 5. العنوان الرئيسي
         st.markdown("<h1 class='main-title'>Human Performance OS v2.0</h1>", unsafe_allow_html=True)
-
-        # 6. إنشاء التبويبات (أضفنا تبويب FACE)
         tab_metrics, tab_chat, tab_bt, tab_face = st.tabs(["📊 SYSTEM METRICS", "🤖 NEURAL CHAT", "🔵 BLUETOOTH", "🖼️ FACE"])
 
-        # 7. عرض الـ Dashboard
         with tab_metrics:
             Dashboard.render(hr_val, step_val)
 
-        # 8. عرض صندوق المحادثة
         with tab_chat:
             NeuralChat.render()
 
-        # 9. عرض البلوتوث
         with tab_bt:
             BluetoothManager.render_ui()
 
-        # 10. عرض لوحة الوجه المميّز
         with tab_face:
             st.markdown("<h3 style='color:#00ff88; font-family:Orbitron;'>🖼️ Face Panel</h3>", unsafe_allow_html=True)
             uploaded = st.file_uploader("Upload face image", type=["png","jpg","jpeg"])
             image_path = None
             if uploaded:
-                # save temp file per user (username used if available)
                 username = st.session_state.get('auth', {}).get('user', {}).get('username', 'anon')
                 image_path = f"temp_face_{username}.png"
                 try:
@@ -612,33 +635,28 @@ class MainApp:
                     st.error(f"Failed to save uploaded image: {e}")
                     image_path = None
 
-            # Evaluate face now (calls decision/evaluate endpoint)
             decision = None
             if st.button("Evaluate Face Now"):
                 if not AuthManager.is_authenticated():
                     st.warning("Please sign in first.")
                 else:
-                    # prepare a lightweight payload; you can extend to include image metadata
-                    payload = {"user_id": None, "hr": hr_val, "steps": step_val, "sleep_hours": sleep_val, "screen_time": screen_val}
-                    # attempt to extract user_id from token if possible (not guaranteed)
-                    token = AuthManager.get_token()
-                    # backend evaluate endpoint expects user_id and metrics; we pass None if unknown
-                    ok, resp = BackendConnector.post("decision/evaluate", payload=payload, require_auth=True)
-                    if ok:
-                        decision = resp.get("decision")
-                        # attach returned decision_id if present
-                        if resp.get("decision_id"):
-                            if isinstance(decision, dict):
-                                decision["id"] = resp.get("decision_id")
-                    else:
-                        st.error(f"Evaluation failed: {resp.get('error')}")
+                    evaluate_face_flow(hr_val, step_val, sleep_val, screen_val, image_path=image_path)
 
-            # render face panel (decision may be None)
+            # show status and image
+            stage = st.session_state.get("face_stage", "idle")
+            if stage == "queued":
+                st.info("Evaluation queued. Waiting for result...")
+            elif stage == "done":
+                st.success("Decision ready.")
+            elif stage == "idle":
+                st.info("No evaluation in progress.")
+
+            decision = st.session_state.get("face_result")
             face_png = FacePanel.render(image_path=image_path, decision=decision, user_id=st.session_state.get('auth', {}).get('user', {}).get('id'))
             st.image(face_png, use_column_width=True)
 
 # -------------------------------
-# تشغيل التطبيق
+# Run
 # -------------------------------
 if __name__ == "__main__":
     MainApp.run()

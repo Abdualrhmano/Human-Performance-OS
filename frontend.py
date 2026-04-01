@@ -1,6 +1,7 @@
 # streamlit_app_with_facepanel.py
 # Human Performance OS - Streamlit UI with FacePanel integration (PIL-based, no cairosvg)
 # Includes client integration to FastAPI orchestrator (POST /decision/evaluate, WS /ws/decisions/{id})
+# Improved: agent reports display, feedback buttons, Gemini-ready endpoints, robust fallbacks
 
 import os
 import io
@@ -34,7 +35,7 @@ except Exception:
 # -------------------------------
 # Configuration
 # -------------------------------
-API_BASE = os.environ.get("HPOS_API_BASE", "http://localhost:8000")  # FastAPI base
+API_BASE = os.environ.get("HPOS_API_BASE", "http://localhost:8000/api/v2")  # FastAPI base with API prefix
 WS_BASE = API_BASE.replace("http://", "ws://").replace("https://", "wss://")
 DB_PATH = "human_performance_v2.db"
 
@@ -60,8 +61,8 @@ class SystemUI:
 # AuthManager (lightweight)
 # -------------------------------
 class AuthManager:
-    LOGIN_ENDPOINT = f"{API_BASE}/auth/login"
-    REGISTER_ENDPOINT = f"{API_BASE}/auth/register"
+    LOGIN_ENDPOINT = f"{API_BASE.rstrip('/')}/auth/login"
+    REGISTER_ENDPOINT = f"{API_BASE.rstrip('/')}/auth/register"
 
     @staticmethod
     def init_session():
@@ -145,7 +146,10 @@ class BackendConnector:
 
     @staticmethod
     def _full_url(path: str) -> str:
-        return f"{BackendConnector.BASE_URL.rstrip('/')}/{path.lstrip('/')}"
+        base = BackendConnector.BASE_URL.rstrip('/')
+        if not base.endswith("/api/v2"):
+            base = base.rstrip('/') + "/api/v2"
+        return f"{base}/{path.lstrip('/')}"
 
     @staticmethod
     def get(path: str, params: dict = None, require_auth: bool = True) -> Tuple[bool, dict]:
@@ -525,7 +529,7 @@ def submit_evaluation_to_backend(payload: dict) -> dict:
     try:
         ok, resp = BackendConnector.post("decision/evaluate", payload=payload, require_auth=True)
         if ok:
-            return {"ok": True, "decision_id": resp.get("decision_id")}
+            return {"ok": True, "decision_id": resp.get("decision_id"), "decision": resp.get("decision")}
         return {"ok": False, "error": resp.get("error")}
     except Exception as e:
         return {"ok": False, "error": str(e)}
@@ -539,7 +543,7 @@ def poll_decision_status(decision_id: str, timeout: int = 60) -> dict:
             if status == "done":
                 ok2, rec = BackendConnector.get(f"decision/{decision_id}", require_auth=True)
                 if ok2:
-                    return {"status":"done", "decision": rec.get("final_decision") or rec.get("final_decision", {})}
+                    return {"status":"done", "decision": rec.get("final_decision") or rec.get("decision") or rec.get("final_decision", {})}
         time.sleep(1.5)
     return {"status":"timeout"}
 
@@ -580,6 +584,10 @@ def evaluate_face_flow(hr_val, step_val, sleep_val, screen_val, image_path=None)
     decision_id = submit_resp.get("decision_id")
     st.session_state.face_stage = "queued"
     st.session_state.face_decision_id = decision_id
+    # store immediate decision if returned
+    if submit_resp.get("decision"):
+        st.session_state.face_result = submit_resp.get("decision")
+        st.session_state.face_stage = "done"
     try:
         t = threading.Thread(target=_ws_thread, args=(decision_id,), daemon=True)
         t.start()
@@ -640,7 +648,25 @@ class MainApp:
                 if not AuthManager.is_authenticated():
                     st.warning("Please sign in first.")
                 else:
-                    evaluate_face_flow(hr_val, step_val, sleep_val, screen_val, image_path=image_path)
+                    # attach user id if available
+                    uid = st.session_state.get('auth', {}).get('user', {}).get('id')
+                    payload = {"user_id": uid, "hr": hr_val, "steps": step_val, "sleep_hours": sleep_val, "screen_time": screen_val}
+                    submit_resp = submit_evaluation_to_backend(payload)
+                    if submit_resp.get("ok"):
+                        st.session_state.face_decision_id = submit_resp.get("decision_id")
+                        if submit_resp.get("decision"):
+                            st.session_state.face_result = submit_resp.get("decision")
+                            st.session_state.face_stage = "done"
+                        else:
+                            st.session_state.face_stage = "queued"
+                            try:
+                                t = threading.Thread(target=_ws_thread, args=(st.session_state.face_decision_id,), daemon=True)
+                                t.start()
+                            except Exception:
+                                pass
+                            threading.Thread(target=lambda: poll_decision_status(st.session_state.face_decision_id, timeout=30), daemon=True).start()
+                    else:
+                        st.error(f"Submit failed: {submit_resp.get('error')}")
 
             # show status and image
             stage = st.session_state.get("face_stage", "idle")
@@ -654,6 +680,44 @@ class MainApp:
             decision = st.session_state.get("face_result")
             face_png = FacePanel.render(image_path=image_path, decision=decision, user_id=st.session_state.get('auth', {}).get('user', {}).get('id'))
             st.image(face_png, use_column_width=True)
+
+            # remove temp file if exists
+            if image_path and os.path.exists(image_path):
+                try:
+                    os.remove(image_path)
+                except Exception:
+                    pass
+
+            # display agent reports if present
+            if decision and isinstance(decision, dict):
+                agent_reports = decision.get("agent_reports") or (decision.get("decision", {}) or {}).get("agent_reports")
+                if agent_reports:
+                    st.markdown("### تقارير الوكلاء")
+                    for idx, r in enumerate(agent_reports):
+                        agent_name = r.get("agent", "Unknown")
+                        assessment = r.get("assessment", r.get("action", "—"))
+                        action = r.get("action", "—")
+                        severity = r.get("severity", "—")
+                        explain = r.get("explain") or r.get("meta") or ""
+                        source = (r.get("meta") or {}).get("source", "unknown")
+                        st.markdown(f"**{agent_name}** — تقييم: **{assessment}** • إجراء: **{action}** • شدة: **{severity}** • مصدر: **{source}**")
+                        if explain:
+                            if isinstance(explain, (dict, list)):
+                                st.json(explain)
+                            else:
+                                st.write(explain)
+                        cola, colb = st.columns([1,3])
+                        with cola:
+                            if st.button(f"Accept {agent_name}", key=f"accept_{idx}"):
+                                did = st.session_state.get("face_decision_id")
+                                if did:
+                                    FacePanel._submit_feedback_ui(did, feedback_type="accepted", user_id=st.session_state.get('auth', {}).get('user', {}).get('id'))
+                        with colb:
+                            if st.button(f"Reject {agent_name}", key=f"reject_{idx}"):
+                                did = st.session_state.get("face_decision_id")
+                                if did:
+                                    FacePanel._submit_feedback_ui(did, feedback_type="rejected", user_id=st.session_state.get('auth', {}).get('user', {}).get('id'))
+                        st.write("---")
 
 # -------------------------------
 # Run

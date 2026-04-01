@@ -17,6 +17,7 @@ class Libraries:
     import typing
     # HTTP / Async client
     import aiohttp
+    import logging
 
     # FastAPI و Pydantic
     from fastapi import FastAPI, Depends, HTTPException, Header

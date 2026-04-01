@@ -180,7 +180,7 @@ class DataBus:
             Libraries.LOG.debug(f"Created job record {job_id} (db id {jid})")
             return jid
 
-    def update_job_record(self, job_id: str, status: str, result: dict[str, any] | None = None): 
+    def update_job_record(self, job_id: str, status: str, result: dict[str, any] | None ): 
 
         with self._connect() as conn:
             cur = conn.cursor()

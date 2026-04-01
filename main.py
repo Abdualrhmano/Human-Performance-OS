@@ -203,8 +203,8 @@ class DataBus:
             except Exception:
                 pass
 
-    def get_redis_job(self, prefix: str, job_id: str) -> dict[str, any] | None = None
-]:
+    def get_redis_job(self, prefix: str, job_id: str) -> [dict[str, any] | None = None]:
+
         if not self.redis:
             return None
         raw = self.redis.get(prefix + job_id)

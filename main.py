@@ -139,7 +139,7 @@ class DataBus:
     # -------------------------
     # Performance log helpers
     # -------------------------
-    def insert_performance_log(self, user_id: int, metrics: dict[str, any], performance_score: float, job_id: Optional[str] = None) -> int:
+    def insert_performance_log(self, user_id: int, metrics: dict[str, any], performance_score: float, job_id: str | None) -> int:
         with self._connect() as conn:
             cur = conn.cursor()
             cur.execute("""INSERT INTO performance_logs
@@ -180,7 +180,7 @@ class DataBus:
             Libraries.LOG.debug(f"Created job record {job_id} (db id {jid})")
             return jid
 
-    def update_job_record(self, job_id: str, status: str, result: dict[str, any] | None = None
+    def update_job_record(self, job_id: str, status: str, result: dict[str, any] | None: 
 ):
         with self._connect() as conn:
             cur = conn.cursor()
@@ -203,7 +203,7 @@ class DataBus:
             except Exception:
                 pass
 
-    def get_redis_job(self, prefix: str, job_id: str) -> [dict[str, any] | None = None]:
+    def get_redis_job(self, prefix: str, job_id: str) -> dict[str, any] | None :
 
         if not self.redis:
             return None

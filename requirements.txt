@@ -37,3 +37,4 @@ python-dotenv
 htbuilder
 redis
 typing
+logging

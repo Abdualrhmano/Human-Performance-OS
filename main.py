@@ -3,10 +3,7 @@
 # ============================
 
 class Libraries:
-    """
-    جميع المكتبات المطلوبة موضوعة هنا.
-    استيرادات مركزة داخل كلاس كما طلبت.
-    """
+    
     import os
     import sys
     import json
@@ -142,7 +139,7 @@ class DataBus:
     # -------------------------
     # Performance log helpers
     # -------------------------
-    def insert_performance_log(self, user_id: int, metrics: dict[str, Any], performance_score: float, job_id: Optional[str] = None) -> int:
+    def insert_performance_log(self, user_id: int, metrics: dict[str, any], performance_score: float, job_id: Optional[str] = None) -> int:
         with self._connect() as conn:
             cur = conn.cursor()
             cur.execute("""INSERT INTO performance_logs
@@ -172,7 +169,7 @@ class DataBus:
     # -------------------------
     # Jobs management
     # -------------------------
-    def create_job_record(self, job_id: str, user_id: int, job_type: str, payload: Dict[str, Any]) -> int:
+    def create_job_record(self, job_id: str, user_id: int, job_type: str, payload: dict[str, any]) -> int:
         with self._connect() as conn:
             cur = conn.cursor()
             cur.execute("""INSERT INTO jobs (job_id, user_id, type, payload, status, created_at)
@@ -183,7 +180,8 @@ class DataBus:
             Libraries.LOG.debug(f"Created job record {job_id} (db id {jid})")
             return jid
 
-    def update_job_record(self, job_id: str, status: str, result: Optional[Dict[str, Any]] = None):
+    def update_job_record(self, job_id: str, status: str, result: dict[str, any] | None = None
+):
         with self._connect() as conn:
             cur = conn.cursor()
             cur.execute("UPDATE jobs SET status = ?, result = ?, finished_at = ? WHERE job_id = ?", (status, Libraries.json.dumps(result) if result is not None else None, Libraries.datetime.utcnow().isoformat(), job_id))
@@ -198,14 +196,15 @@ class DataBus:
             except Exception as e:
                 Libraries.LOG.warning(f"Failed to push job to redis queue: {e}")
 
-    def set_redis_job(self, prefix: str, job_id: str, payload: Dict[str, Any]):
+    def set_redis_job(self, prefix: str, job_id: str, payload: dict[str, any]):
         if self.redis:
             try:
                 self.redis.set(prefix + job_id, Libraries.json.dumps(payload))
             except Exception:
                 pass
 
-    def get_redis_job(self, prefix: str, job_id: str) -> Optional[Dict[str, Any]]:
+    def get_redis_job(self, prefix: str, job_id: str) -> dict[str, any] | None = None
+]:
         if not self.redis:
             return None
         raw = self.redis.get(prefix + job_id)
@@ -214,7 +213,7 @@ class DataBus:
     # -------------------------
     # Decision helpers
     # -------------------------
-    def insert_decision(self, user_id: int, decision_type: str, decision_payload: Dict[str, Any], reason: str) -> int:
+    def insert_decision(self, user_id: int, decision_type: str, decision_payload: dict[str, any], reason: str) -> int:
         with self._connect() as conn:
             cur = conn.cursor()
             cur.execute("""INSERT INTO decisions (user_id, decision_type, decision_payload, reason, created_at)
@@ -228,7 +227,7 @@ class DataBus:
     # -------------------------
     # Profile helpers
     # -------------------------
-    def upsert_user_profile(self, user_id: int, profile: Dict[str, Any]):
+    def upsert_user_profile(self, user_id: int, profile: dict[str, any]):
         with self._connect() as conn:
             cur = conn.cursor()
             cur.execute("""INSERT OR REPLACE INTO user_profiles

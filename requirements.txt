@@ -38,3 +38,4 @@ htbuilder
 redis
 typing
 logging
+uuid

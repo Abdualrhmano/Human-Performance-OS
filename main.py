@@ -41,7 +41,7 @@ class Libraries:
     from cryptography.fernet import Fernet
 
     # AI client (Gemini) - optional
- try:
+try:
     import google.generativeai as genai
     GEMINI_KEY = "AIzaSyCG7WK6t9Fn73Oq2ajJ337KRUrW57X82Ao"
     genai.configure(api_key=GEMINI_KEY)

@@ -196,10 +196,24 @@ class DataBus:
             conn.commit()
 
     def link_job_to_log(self, log_id: int, job_id: str):
-        with self._connect() as conn:
-            cur = conn.cursor()
-            cur.execute("UPDATE performance_logs SET job_id = ? WHERE id = ?", (job_id, log_id))
-            conn.commit()
+        if self.redis:
+            try:
+                self.redis.lpush("jobs", job_id)
+            except Exception as e:
+                LOG.warning(f"Failed to push job to redis queue: {e}")
+
+    def set_redis_job(self, prefix: str, job_id: str, payload: dict):
+        if self.redis:
+            try:
+                self.redis.set(prefix + job_id, json.dumps(payload))
+            except Exception:
+                pass
+
+    def get_redis_job(self, prefix: str, job_id: str) -> Optional[dict]:
+        if not self.redis:
+            return None
+        raw = self.redis.get(prefix + job_id)
+        return json.loads(raw) if raw else None
 
     # Jobs
     def create_job_record(self, job_id: str, user_id: int, job_type: str, payload: dict) -> int:
@@ -224,19 +238,6 @@ class DataBus:
                 self.redis.lpush(queue_key, job_id)
             except Exception as e:
                 LOG.warning(f"Failed to push job to redis queue: {e}")
-
-    def set_redis_job(self, prefix: str, job_id: str, payload: dict):
-        if self.redis:
-            try:
-                self.redis.set(prefix + job_id, json.dumps(payload))
-            except Exception:
-                pass
-
-    def get_redis_job(self, prefix: str, job_id: str) -> Optional[dict]:
-        if not self.redis:
-            return None
-        raw = self.redis.get(prefix + job_id)
-        return json.loads(raw) if raw else None
 
     # Decisions & Feedback & Profiles
     def insert_decision(self, job_id: str, user_id: int, decision_type: str, decision_payload: dict, reason: str, confidence: float, executor: str = "executive") -> int:
@@ -486,14 +487,47 @@ async def get_profile(user_id: int):
     ps = ProfileService(db)
     return ps.get_profile(user_id)
 
+# -------------------------
+# Decision evaluate endpoint using agents and Gemini
+# -------------------------
 @app.post("/api/v2/decision/evaluate", tags=["Decision"])
 async def evaluate_decision(user_id: int, metrics: DeviceMetricsSchema):
+    """
+    Run local agents (Health, Productivity, Executive) with AIClient (Gemini) if available,
+    persist the decision and return the decision including agent_reports.
+    """
+    # 1. compute profile
     ps = ProfileService(db)
     profile = ps.compute_profile(user_id)
-    de = DecisionEngine(db)
-    decision = de.evaluate_context(user_id, profile, metrics.dict())
+
+    # 2. prepare AI client for agents (Gemini)
+    ai_client = AIClient(api_key=GEMINI_KEY)
+
+    # 3. run agents and get decision (agents.py: run_agents_and_decide)
+    payload = {**metrics.dict(), "profile": profile}
+    try:
+        decision = run_agents_and_decide(user_id, payload, ai_client=ai_client)
+    except Exception as e:
+        LOG.exception("run_agents_and_decide failed: %s", e)
+        decision = {"action": "monitor", "confidence": 0.0, "reason": "agents_failed", "agent_reports": []}
+
+    # 4. persist decision in DB
     job_id = str(uuid.uuid4())
-    did = db.insert_decision(job_id=job_id, user_id=user_id, decision_type=decision["action"], decision_payload={"payload": metrics.dict()}, reason=decision["reason"], confidence=decision.get("confidence",0.0), executor="evaluate_endpoint")
+    try:
+        did = db.insert_decision(
+            job_id=job_id,
+            user_id=user_id,
+            decision_type=decision.get("action"),
+            decision_payload={"agent_reports": decision.get("agent_reports"), "payload": payload},
+            reason=decision.get("reason", ""),
+            confidence=decision.get("confidence", 0.0),
+            executor="evaluate_endpoint"
+        )
+    except Exception as e:
+        LOG.exception("Failed to insert decision: %s", e)
+        did = None
+
+    # 5. return decision and id
     return {"decision": decision, "decision_id": did}
 
 # Feedback & Insight endpoints

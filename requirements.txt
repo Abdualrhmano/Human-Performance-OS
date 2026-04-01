@@ -39,3 +39,4 @@ redis
 typing
 logging
 uuid
+jwt

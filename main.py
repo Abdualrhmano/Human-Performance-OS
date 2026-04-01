@@ -14,7 +14,8 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import uvicorn
-
+import uuid
+from fastapi import Depends
 # Optional imports
 try:
     import redis
@@ -292,24 +293,37 @@ async def me(current_user: dict = Depends(get_current_user)):
 # -------------------------
 # Performance Schema
 # -------------------------
+# تأكد من وجود الاستيراد في أعلى الملف
+
+# تأكد أن DeviceMetricsSchema يحتوي الحقول التالية
 class DeviceMetricsSchema(BaseModel):
     hr: int
     steps: int
     screen_time: float
     sleep_hours: float
 
-# -------------------------
-# Performance sync endpoint
-# -------------------------
+# الدالة المصححة
 @app.post("/api/v2/performance/sync", tags=["Performance"])
-async def sync_metrics(metrics: DeviceMetricsSchema, current_user: dict = Depends(get_current_user)):
-    # حساب score بسيط (placeholder)
-    score = (metrics.hr/100) + (metrics.steps/10000) + (metrics.sleep_hours/8) - (metrics.screen_time/10)
+async def sync_metrics(
+    metrics: DeviceMetricsSchema,
+    current_user: dict = Depends(get_current_user)
+):
+    # حساب score بسيط (يمكن استبداله بنموذج لاحقاً)
+    score = (metrics.hr / 100) + (metrics.steps / 10000) + (metrics.sleep_hours / 8) - (metrics.screen_time / 10)
+
+    # توليد job_id وإنشاء سجل الأداء
     job_id = str(uuid.uuid4())
     log_id = db.insert_performance_log(current_user["id"], metrics.dict(), score, job_id)
+
+    # إنشاء سجل job في جدول jobs
     db.create_job_record(job_id, current_user["id"], "insight", metrics.dict())
+
+    # دفع الـ job إلى الطابور (إن كان Redis متاح)
     db.push_job_to_queue("jobs", job_id)
+
+    # حفظ payload في Redis مع بادئة واضحة
     db.set_redis_job("payload:", job_id, metrics.dict())
+
     return {"job_id": job_id, "log_id": log_id}
     
 # -------------------------

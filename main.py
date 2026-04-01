@@ -16,7 +16,7 @@ class Libraries:
     import asyncio
     from typing import Optional, Dict, Any, List, Tuple
     from datetime import datetime, timedelta
-
+    import typing
     # HTTP / Async client
     import aiohttp
 

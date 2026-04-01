@@ -21,7 +21,7 @@ from agents import AIClient, run_agents_and_decide
 
 # DataBus import (adjust path if DataBus is in a different module)
 # Ensure main_part3.DataBus is importable without circular imports
-from main_part3 import DataBus
+from main import DataBus
 
 # Logging
 logging.basicConfig(level=logging.INFO)

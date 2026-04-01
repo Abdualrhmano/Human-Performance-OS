@@ -38,7 +38,6 @@ streamlit>=1.40.0
 plotly==5.18.0
 watchdog==4.0.0
 Pillow==10.0.0
-cairosvg==2.6.2
 
 # DB adapters / production
 psycopg2-binary==2.9.10
@@ -56,7 +55,8 @@ onnxconverter-common==1.13.0
 onnxruntime-extensions==0.7.0
 
 # Optional conversion / quantization helpers
-torch==2.2.0   # optional, only if you convert PyTorch models locally
+# torch is optional and heavy; install only if you will convert PyTorch models locally
+# torch==2.2.0
 skl2onnx==1.13.0  # optional, for sklearn -> ONNX conversion
 
 # WebSocket client for Streamlit background thread

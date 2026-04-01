@@ -1,10 +1,8 @@
 
 import os
-import sys
 import json
+import uuid
 import logging
-import base64
-import hashlib
 import sqlite3
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
@@ -16,7 +14,7 @@ from pydantic import BaseModel, Field
 import uvicorn
 import uuid
 from fastapi import Depends
-# Optional imports
+# Optional Redis
 try:
     import redis
     REDIS_AVAILABLE = True
@@ -24,20 +22,10 @@ except Exception:
     redis = None
     REDIS_AVAILABLE = False
 
-try:
-    import google.generativeai as genai
-    GENAI_AVAILABLE = True
-except Exception:
-    genai = None
-    GENAI_AVAILABLE = False
-
-# -------------------------
-# Configuration (env vars)
-# -------------------------
+# Config
 DB_PATH = os.getenv("DB_PATH", "human_performance_v2.db")
 REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-GEMINI_KEY = os.getenv("GEMINI_KEY", "")
-SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")  # change in prod
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")
 ALGORITHM = os.getenv("ALGORITHM", "HS256")
 TOKEN_EXPIRY_HOURS = int(os.getenv("TOKEN_EXPIRY_HOURS", "24"))
 
@@ -45,25 +33,15 @@ TOKEN_EXPIRY_HOURS = int(os.getenv("TOKEN_EXPIRY_HOURS", "24"))
 logging.basicConfig(level=logging.INFO)
 LOG = logging.getLogger("human_performance")
 
-# Configure Gemini if available and key present
-if GENAI_AVAILABLE and GEMINI_KEY:
-    try:
-        genai.configure(api_key=GEMINI_KEY)
-        LOG.info("Gemini client configured.")
-    except Exception as e:
-        LOG.warning(f"Gemini configure failed: {e}")
-        GENAI_AVAILABLE = False
-
 # -------------------------
-# Security provider (simple)
+# Simple Security Provider
 # -------------------------
 class SecurityProvider:
     @staticmethod
     def hash_password(password: str) -> str:
-        # deterministic hash using SECRET_KEY as salt (simple; replace with passlib in prod)
+        import hashlib
         salt = str(SECRET_KEY)
-        db_password = password + salt
-        return hashlib.sha256(db_password.encode()).hexdigest()
+        return hashlib.sha256((password + salt).encode()).hexdigest()
 
     @staticmethod
     def verify_password(plain: str, hashed: str) -> bool:
@@ -71,9 +49,9 @@ class SecurityProvider:
 
     @staticmethod
     def generate_token(data: dict) -> str:
+        import jwt
         payload = data.copy()
         payload.update({"exp": datetime.utcnow() + timedelta(hours=TOKEN_EXPIRY_HOURS)})
-        import jwt
         return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
 
     @staticmethod
@@ -99,7 +77,7 @@ class DataBus:
                 LOG.warning(f"Redis connection failed: {e}")
                 self.redis = None
         else:
-            LOG.info("Redis library not available; continuing without Redis.")
+            LOG.info("Redis not available; running without Redis.")
         self._ensure_tables()
 
     def _connect(self):
@@ -157,7 +135,7 @@ class DataBus:
             conn.commit()
             LOG.info("Database tables ensured/created.")
 
-    # User helpers
+    # Users
     def create_user(self, username: str, password_hash: str) -> int:
         with self._connect() as conn:
             cur = conn.cursor()
@@ -174,77 +152,197 @@ class DataBus:
                 return None
             return {"id": row[0], "username": row[1], "password_hash": row[2]}
 
+    # Performance logs
+    def insert_performance_log(self, user_id: int, metrics: dict, performance_score: float, job_id: Optional[str]) -> int:
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute("""INSERT INTO performance_logs
+                           (user_id, heart_rate, steps, screen_time, sleep_hours, performance_score, ai_recommendation, timestamp, job_id)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (user_id, metrics.get("hr"), metrics.get("steps"), metrics.get("screen_time"),
+                         metrics.get("sleep_hours"), performance_score, None, datetime.utcnow().isoformat(), job_id))
+            conn.commit()
+            return cur.lastrowid
+
+    def update_performance_log_ai(self, log_id: int, ai_text: str):
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute("UPDATE performance_logs SET ai_recommendation = ? WHERE id = ?", (ai_text, log_id))
+            conn.commit()
+
+    def link_job_to_log(self, log_id: int, job_id: str):
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute("UPDATE performance_logs SET job_id = ? WHERE id = ?", (job_id, log_id))
+            conn.commit()
+
+    # Jobs
+    def create_job_record(self, job_id: str, user_id: int, job_type: str, payload: dict) -> int:
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute("""INSERT INTO jobs (job_id, user_id, type, payload, status, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?)""",
+                        (job_id, user_id, job_type, json.dumps(payload), "queued", datetime.utcnow().isoformat()))
+            conn.commit()
+            return cur.lastrowid
+
+    def update_job_record(self, job_id: str, status: str, result: Optional[dict]):
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute("UPDATE jobs SET status = ?, result = ?, finished_at = ? WHERE job_id = ?",
+                        (status, json.dumps(result) if result is not None else None, datetime.utcnow().isoformat(), job_id))
+            conn.commit()
+
+    def push_job_to_queue(self, queue_key: str, job_id: str):
+        if self.redis:
+            try:
+                self.redis.lpush(queue_key, job_id)
+            except Exception as e:
+                LOG.warning(f"Failed to push job to redis queue: {e}")
+
+    def set_redis_job(self, prefix: str, job_id: str, payload: dict):
+        if self.redis:
+            try:
+                self.redis.set(prefix + job_id, json.dumps(payload))
+            except Exception:
+                pass
+
+    def get_redis_job(self, prefix: str, job_id: str) -> Optional[dict]:
+        if not self.redis:
+            return None
+        raw = self.redis.get(prefix + job_id)
+        return json.loads(raw) if raw else None
+
+    # Decisions
+    def insert_decision(self, user_id: int, decision_type: str, decision_payload: dict, reason: str) -> int:
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute("""INSERT INTO decisions (user_id, decision_type, decision_payload, reason, created_at)
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (user_id, decision_type, json.dumps(decision_payload), reason, datetime.utcnow().isoformat()))
+            conn.commit()
+            return cur.lastrowid
+
+    def fetch_recent_metrics(self, user_id: int, limit: int = 30):
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT steps, sleep_hours, performance_score, timestamp FROM performance_logs WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?", (user_id, limit))
+            return cur.fetchall()
+
+    def upsert_user_profile(self, user_id: int, profile: dict):
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute("""INSERT OR REPLACE INTO user_profiles
+                           (user_id, last_active, avg_sleep, avg_steps, risk_score, behavior_vector, updated_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                        (user_id, datetime.utcnow().isoformat(), profile.get("avg_sleep"), profile.get("avg_steps"),
+                         profile.get("risk_score"), json.dumps(profile.get("behavior_vector", {})), datetime.utcnow().isoformat()))
+            conn.commit()
+
 db = DataBus()
 
 # -------------------------
-# Pydantic Schemas
+# Decision Engine (MVP)
+# -------------------------
+class DecisionEngine:
+    def __init__(self, db: DataBus):
+        self.db = db
+        self.weights = {"hr": -0.3, "steps": 0.4, "sleep_hours": 0.5, "screen_time": -0.2}
+        self.policy_stats = {}
+
+    def _context_hash(self, profile: dict, metrics: dict) -> str:
+        key = f"{profile.get('avg_steps',0)}|{profile.get('avg_sleep',0)}"
+        return key
+
+    def evaluate_context(self, user_id: int, profile: dict, metrics: dict) -> dict:
+        if metrics.get("hr",0) > 120:
+            return {"action":"auto_act", "confidence":0.95, "reason":"High heart rate detected"}
+        if metrics.get("sleep_hours",0) < 4:
+            return {"action":"nudge", "confidence":0.8, "reason":"Very low sleep"}
+
+        score = (metrics.get("steps",0)/10000)*self.weights["steps"] + \
+                (metrics.get("sleep_hours",0)/8)*self.weights["sleep_hours"] + \
+                (metrics.get("screen_time",0)/10)*self.weights["screen_time"] + \
+                (metrics.get("hr",0)/100)*self.weights["hr"]
+
+        if score < -0.5:
+            action = "auto_act"
+            conf = min(0.9, 0.6 + abs(score)/2)
+        elif score < 0.0:
+            action = "nudge"
+            conf = 0.6
+        else:
+            action = "monitor"
+            conf = 0.5
+
+        # epsilon-greedy stub
+        import random
+        epsilon = 0.1
+        ctx = self._context_hash(profile, metrics)
+        stats = self.policy_stats.get(ctx, {})
+        if random.random() < epsilon and stats:
+            action = random.choice(["auto_act","nudge","monitor"])
+            conf = 0.4
+
+        return {"action": action, "confidence": round(conf,2), "reason": f"heuristic_score={round(score,3)}"}
+
+    def record_outcome(self, decision_id: int, reward: float):
+        with sqlite3.connect(self.db.db_path) as conn:
+            cur = conn.cursor()
+            cur.execute("UPDATE decisions SET outcome = ? WHERE id = ?", (str(reward), decision_id))
+            conn.commit()
+
+# -------------------------
+# Profile Service
+# -------------------------
+class ProfileService:
+    def __init__(self, db: DataBus):
+        self.db = db
+
+    def compute_profile(self, user_id: int) -> dict:
+        rows = self.db.fetch_recent_metrics(user_id, limit=30)
+        if not rows:
+            profile = {"avg_steps":0, "avg_sleep":0, "risk_score":0.0, "behavior_vector":{}}
+            self.db.upsert_user_profile(user_id, profile)
+            return profile
+
+        steps = [r[0] or 0 for r in rows]
+        sleep = [r[1] or 0 for r in rows]
+        perf = [r[2] or 0 for r in rows]
+        avg_steps = sum(steps)/len(steps)
+        avg_sleep = sum(sleep)/len(sleep)
+        risk = max(0.0, 1.0 - (avg_sleep/8.0) - (avg_steps/10000.0))
+        behavior_vector = {"steps_trend": avg_steps, "sleep_trend": avg_sleep, "perf_mean": sum(perf)/len(perf)}
+        profile = {"avg_steps": avg_steps, "avg_sleep": avg_sleep, "risk_score": risk, "behavior_vector": behavior_vector}
+        self.db.upsert_user_profile(user_id, profile)
+        return profile
+
+    def get_profile(self, user_id: int) -> dict:
+        with sqlite3.connect(self.db.db_path) as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT avg_sleep, avg_steps, risk_score, behavior_vector FROM user_profiles WHERE user_id = ?", (user_id,))
+            row = cur.fetchone()
+            if not row:
+                return self.compute_profile(user_id)
+            return {"avg_sleep": row[0], "avg_steps": row[1], "risk_score": row[2], "behavior_vector": json.loads(row[3] or "{}")}
+
+# -------------------------
+# Pydantic Schemas & App
 # -------------------------
 class UserAuthSchema(BaseModel):
-    username: str = Field(..., example="alice")
-    password: str = Field(..., example="secret")
+    username: str
+    password: str
 
-class HealthResponse(BaseModel):
-    status: str
-    db: bool
-    redis: bool
-    ai: bool
-    time: str
+class DeviceMetricsSchema(BaseModel):
+    hr: int
+    steps: int
+    screen_time: float
+    sleep_hours: float
 
-# -------------------------
-# FastAPI app
-# -------------------------
-app = FastAPI(title="Human Performance OS v2.0", version="2.0.0",
-              description="AI-Driven Performance Orchestration System")
+app = FastAPI(title="Human Performance OS v3 - DecisionEngine", version="3.0.0")
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-# Root
-@app.get("/", tags=["default"])
-async def root():
-    return {"message": "Human Performance OS is Running", "status": "Online"}
-
-# Health endpoint
-@app.get("/api/v2/health", response_model=HealthResponse, tags=["System"])
-async def health():
-    db_ok = False
-    redis_ok = False
-    ai_ok = False
-
-    # DB check
-    try:
-        with sqlite3.connect(DB_PATH) as conn:
-            conn.execute("SELECT 1")
-        db_ok = True
-    except Exception as e:
-        LOG.warning(f"DB health check failed: {e}")
-        db_ok = False
-
-    # Redis check
-    try:
-        if db.redis:
-            db.redis.ping()
-            redis_ok = True
-    except Exception as e:
-        LOG.warning(f"Redis health check failed: {e}")
-        redis_ok = False
-
-    # AI check (basic)
-    try:
-        ai_ok = GENAI_AVAILABLE and bool(GEMINI_KEY)
-    except Exception:
-        ai_ok = False
-
-    status = "ok" if db_ok and (not REDIS_AVAILABLE or redis_ok) else "degraded"
-    return {"status": status, "db": db_ok, "redis": redis_ok, "ai": ai_ok, "time": datetime.utcnow().isoformat()}
-
-# -------------------------
-# Auth endpoints: register + login
-# -------------------------
+# Auth endpoints (register/login) - same as before
 @app.post("/api/v2/auth/register", tags=["Security"])
 async def register(user: UserAuthSchema):
     existing = db.get_user(user.username)
@@ -254,7 +352,7 @@ async def register(user: UserAuthSchema):
     try:
         user_id = db.create_user(user.username, hashed)
         LOG.info(f"Registered user {user.username} id={user_id}")
-        return {"status": "success", "message": "Enrolled in OS v2.0", "user_id": user_id}
+        return {"status": "success", "user_id": user_id}
     except sqlite3.IntegrityError:
         raise HTTPException(status_code=400, detail="User already exists")
     except Exception as e:
@@ -269,7 +367,6 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     token = SecurityProvider.generate_token({"sub": user["username"], "user_id": user["id"]})
     return {"access_token": token, "token_type": "bearer"}
 
-# Dependency to get current user from token
 async def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
         payload = SecurityProvider.decode_token(token)
@@ -285,50 +382,58 @@ async def get_current_user(token: str = Depends(oauth2_scheme)):
         LOG.warning(f"Token decode failed: {e}")
         raise HTTPException(status_code=401, detail="Invalid or expired token")
 
-# Example protected endpoint
-@app.get("/api/v2/me", tags=["Security"])
-async def me(current_user: dict = Depends(get_current_user)):
-    return {"user": current_user}
+# Root & health
+@app.get("/", tags=["default"])
+async def root():
+    return {"message": "Human Performance OS is Running", "status": "Online"}
 
-# -------------------------
-# Performance Schema
-# -------------------------
-# تأكد من وجود الاستيراد في أعلى الملف
+@app.get("/api/v2/health", tags=["System"])
+async def health():
+    db_ok = False
+    redis_ok = False
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("SELECT 1")
+        db_ok = True
+    except Exception as e:
+        LOG.warning(f"DB health check failed: {e}")
+    try:
+        if db.redis:
+            db.redis.ping()
+            redis_ok = True
+    except Exception as e:
+        LOG.warning(f"Redis health check failed: {e}")
+    ai_ok = False
+    status = "ok" if db_ok and (not REDIS_AVAILABLE or redis_ok) else "degraded"
+    return {"status": status, "db": db_ok, "redis": redis_ok, "ai": ai_ok, "time": datetime.utcnow().isoformat()}
 
-# تأكد أن DeviceMetricsSchema يحتوي الحقول التالية
-class DeviceMetricsSchema(BaseModel):
-    hr: int
-    steps: int
-    screen_time: float
-    sleep_hours: float
-
-# الدالة المصححة
+# Performance sync endpoint (creates log + job)
 @app.post("/api/v2/performance/sync", tags=["Performance"])
-async def sync_metrics(
-    metrics: DeviceMetricsSchema,
-    current_user: dict = Depends(get_current_user)
-):
-    # حساب score بسيط (يمكن استبداله بنموذج لاحقاً)
+async def sync_metrics(metrics: DeviceMetricsSchema, current_user: dict = Depends(get_current_user)):
     score = (metrics.hr / 100) + (metrics.steps / 10000) + (metrics.sleep_hours / 8) - (metrics.screen_time / 10)
-
-    # توليد job_id وإنشاء سجل الأداء
     job_id = str(uuid.uuid4())
+    payload = {"user_id": current_user["id"], **metrics.dict()}
     log_id = db.insert_performance_log(current_user["id"], metrics.dict(), score, job_id)
-
-    # إنشاء سجل job في جدول jobs
-    db.create_job_record(job_id, current_user["id"], "insight", metrics.dict())
-
-    # دفع الـ job إلى الطابور (إن كان Redis متاح)
+    db.create_job_record(job_id, current_user["id"], "insight", payload)
     db.push_job_to_queue("jobs", job_id)
-
-    # حفظ payload في Redis مع بادئة واضحة
-    db.set_redis_job("payload:", job_id, metrics.dict())
-
+    db.set_redis_job("payload:", job_id, payload)
     return {"job_id": job_id, "log_id": log_id}
-    
-# -------------------------
-# Run (for direct execution)
-# -------------------------
+
+# Profile & Decision endpoints
+@app.get("/api/v2/profile/{user_id}", tags=["Profile"])
+async def get_profile(user_id: int):
+    ps = ProfileService(db)
+    return ps.get_profile(user_id)
+
+@app.post("/api/v2/decision/evaluate", tags=["Decision"])
+async def evaluate_decision(user_id: int, metrics: DeviceMetricsSchema):
+    ps = ProfileService(db)
+    profile = ps.compute_profile(user_id)
+    de = DecisionEngine(db)
+    decision = de.evaluate_context(user_id, profile, metrics.dict())
+    did = db.insert_decision(user_id, decision["action"], metrics.dict(), decision["reason"])
+    return {"decision": decision, "decision_id": did}
+
 if __name__ == "__main__":
-    LOG.info("Starting Human Performance OS (part1)...")
-    uvicorn.run("main_fixed_part1:app", host="0.0.0.0", port=8000, reload=True)
+    LOG.info("Starting Human Performance OS v3...")
+    uvicorn.run("main_part3:app", host="0.0.0.0", port=8000, reload=True)

@@ -55,7 +55,7 @@ onnxconverter-common==1.13.0
 onnxruntime-extensions==0.7.0
 
 # Optional conversion / quantization helpers
-# torch is optional and heavy; install only if you will convert PyTorch models locally
+# torch is optional and heavy; install only if you convert PyTorch models locally
 # torch==2.2.0
 skl2onnx==1.13.0  # optional, for sklearn -> ONNX conversion
 

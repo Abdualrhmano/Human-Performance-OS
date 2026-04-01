@@ -290,6 +290,29 @@ async def me(current_user: dict = Depends(get_current_user)):
     return {"user": current_user}
 
 # -------------------------
+# Performance Schema
+# -------------------------
+class DeviceMetricsSchema(BaseModel):
+    hr: int
+    steps: int
+    screen_time: float
+    sleep_hours: float
+
+# -------------------------
+# Performance sync endpoint
+# -------------------------
+@app.post("/api/v2/performance/sync", tags=["Performance"])
+async def sync_metrics(metrics: DeviceMetricsSchema, current_user: dict = Depends(get_current_user)):
+    # حساب score بسيط (placeholder)
+    score = (metrics.hr/100) + (metrics.steps/10000) + (metrics.sleep_hours/8) - (metrics.screen_time/10)
+    job_id = str(uuid.uuid4())
+    log_id = db.insert_performance_log(current_user["id"], metrics.dict(), score, job_id)
+    db.create_job_record(job_id, current_user["id"], "insight", metrics.dict())
+    db.push_job_to_queue("jobs", job_id)
+    db.set_redis_job("payload:", job_id, metrics.dict())
+    return {"job_id": job_id, "log_id": log_id}
+    
+# -------------------------
 # Run (for direct execution)
 # -------------------------
 if __name__ == "__main__":

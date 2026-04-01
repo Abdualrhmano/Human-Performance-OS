@@ -41,17 +41,17 @@ class Libraries:
     from cryptography.fernet import Fernet
 
     # AI client (Gemini) - optional
-try:
-    import google.generativeai as genai
-    GEMINI_KEY = "AIzaSyCG7WK6t9Fn73Oq2ajJ337KRUrW57X82Ao"
-    genai.configure(api_key=GEMINI_KEY)
-    GENAI_AVAILABLE = True
-except Exception:
-    GENAI_AVAILABLE = False
-
-    # Logging helper
     LOG = logging.getLogger("human_performance")
     LOG.setLevel(logging.INFO)
+    class Libraries:
+     def __init__(self):
+       try:
+            import google.generativeai as genai
+            GEMINI_KEY = "AIzaSyCG7WK6t9Fn73Oq2ajJ337KRUrW57X82Ao"
+            genai.configure(api_key=GEMINI_KEY)
+            self.GENAI_AVAILABLE = True
+       except Exception:
+            self.GENAI_AVAILABLE = False
 
 
 # -------------------------------

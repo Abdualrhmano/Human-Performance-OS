@@ -3,7 +3,7 @@ fastapi==0.109.0
 uvicorn==0.27.0
 pydantic[email]==2.6.0
 python-multipart==0.0.6
-
+redis
 # Auth / Security
 PyJWT==2.8.0
 passlib[bcrypt]==1.7.4
@@ -49,15 +49,13 @@ sentry-sdk==1.24.0
 
 # ONNX / inference acceleration
 onnx==1.15.0
-onnxruntime==1.16.1
-onnxruntime-tools==1.10.0
-onnxconverter-common==1.13.0
-onnxruntime-extensions==0.7.0
+# onnxruntime is environment-specific; install via conda/micromamba or uncomment below if you know your Python version supports it
+# onnxruntime==1.16.1
 
-# Optional conversion / quantization helpers
-# torch is optional and heavy; install only if you convert PyTorch models locally
+# Optional conversion helpers
+# torch is heavy; install only if needed locally
 # torch==2.2.0
-skl2onnx==1.13.0  # optional, for sklearn -> ONNX conversion
+skl2onnx==1.13.0
 
 # WebSocket client for Streamlit background thread
 websocket-client==1.6.3

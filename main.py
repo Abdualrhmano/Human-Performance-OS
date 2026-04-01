@@ -1,9 +1,6 @@
 # ============================
 # PART A — Libraries + DataBus
 # ============================
-
-class Libraries:
-    
     import os
     import sys
     import json
@@ -42,7 +39,7 @@ class Libraries:
     from cryptography.fernet import Fernet
 
     # AI client (Gemini) - optional
-    try:
+ try:
     import google.generativeai as genai
     GEMINI_KEY = "AIzaSyCG7WK6t9Fn73Oq2ajJ337KRUrW57X82Ao"
     genai.configure(api_key=GEMINI_KEY)
@@ -182,8 +179,8 @@ class DataBus:
             Libraries.LOG.debug(f"Created job record {job_id} (db id {jid})")
             return jid
 
-    def update_job_record(self, job_id: str, status: str, result: dict[str, any] | None: 
-):
+    def update_job_record(self, job_id: str, status: str, result: dict[str, any] | None = None): 
+
         with self._connect() as conn:
             cur = conn.cursor()
             cur.execute("UPDATE jobs SET status = ?, result = ?, finished_at = ? WHERE job_id = ?", (status, Libraries.json.dumps(result) if result is not None else None, Libraries.datetime.utcnow().isoformat(), job_id))

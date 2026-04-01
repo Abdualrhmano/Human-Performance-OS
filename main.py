@@ -43,10 +43,12 @@ class Libraries:
 
     # AI client (Gemini) - optional
     try:
-        import google.generativeai as genai
-        GENAI_AVAILABLE ="AIzaSyCG7WK6t9Fn73Oq2ajJ337KRUrW57X82Ao"
-    except Exception:
-        GENAI_AVAILABLE = False
+    import google.generativeai as genai
+    GEMINI_KEY = "AIzaSyCG7WK6t9Fn73Oq2ajJ337KRUrW57X82Ao"
+    genai.configure(api_key=GEMINI_KEY)
+    GENAI_AVAILABLE = True
+except Exception:
+    GENAI_AVAILABLE = False
 
     # Logging helper
     LOG = logging.getLogger("human_performance")
@@ -243,6 +245,28 @@ class DataBus:
             cur = conn.cursor()
             cur.execute("SELECT steps, sleep_hours, performance_score, timestamp FROM performance_logs WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?", (user_id, limit))
             return cur.fetchall()
+            # إنشاء كائن التطبيق (هذا هو الـ app الذي يبحث عنه uvicorn)
+app = Libraries.FastAPI(
+    title="Human Performance OS v2.0",
+    description="AI-Driven Performance Orchestration System",
+    version="2.0.0"
+)
+
+# إعداد الـ CORS لضمان عمل الواجهة الأمامية (Frontend)
+app.add_middleware(
+    Libraries.CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# تعريف الـ DataBus لاستخدامه في المسارات (Endpoints)
+db = DataBus()
+
+@app.get("/")
+async def root():
+    return {"message": " Human Performance OS is Running", "status": "Online"}
+
 
 # ============================
 # End of PART A

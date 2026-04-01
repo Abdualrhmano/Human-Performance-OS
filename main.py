@@ -142,7 +142,7 @@ class DataBus:
     # -------------------------
     # Performance log helpers
     # -------------------------
-    def insert_performance_log(self, user_id: int, metrics: Dict[str, Any], performance_score: float, job_id: Optional[str] = None) -> int:
+    def insert_performance_log(self, user_id: int, metrics: dict[str, Any], performance_score: float, job_id: Optional[str] = None) -> int:
         with self._connect() as conn:
             cur = conn.cursor()
             cur.execute("""INSERT INTO performance_logs

@@ -56,7 +56,7 @@ class SecurityProvider:
 
     @staticmethod
     def decode_token(token: str) -> dict:
-        import jwt
+        
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v2/auth/login")

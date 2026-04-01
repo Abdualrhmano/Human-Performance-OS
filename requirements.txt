@@ -1,42 +1,46 @@
-# --- BACKEND & CORE ---
+# Core API
 fastapi==0.109.0
 uvicorn==0.27.0
 pydantic[email]==2.6.0
 python-multipart==0.0.6
 
-# --- SECURITY & AUTH ---
-cryptography==42.0.2
-passlib[bcrypt]==1.7.4
+# Auth and security
 PyJWT==2.8.0
+passlib[bcrypt]==1.7.4
+cryptography==42.0.2
 
-# --- AI & LOGIC (Updated for Python 3.12) ---
+# Redis and scheduling
+redis==5.0.0
+apscheduler==3.10.1
+python-dotenv==1.0.0
+
+# AI client (Gemini) optional
 google-generativeai==0.3.2
-numpy==1.26.3
-snowflake-snowpark-python>=1.20.0
-snowflake-ml-python>=1.5.0
 
-# --- MARKET & DATA ---
-yfinance==0.2.36
-altair==5.2.0
+# Data science and ML
+numpy==1.26.3
 pandas==2.2.0
 scipy==1.12.0
+scikit-learn==1.3.2
+lightgbm==4.4.0
+joblib==1.3.2
 
-# --- FRONTEND (STREAMLIT) ---
-streamlit>=1.40.0
+# Model persistence and utilities
+joblib==1.3.2
+
+# Async DB and HTTP
+aiosqlite==0.19.0
+aiohttp==3.9.3
 requests==2.31.0
+
+# Dev / testing / optional
+pytest==7.4.0
+jupyterlab==4.3.0
+
+# Hardware / BLE
+bleak==0.21.1
+
+# Frontend / visualization (optional)
+streamlit>=1.40.0
 plotly==5.18.0
 watchdog==4.0.0
-
-# --- HARDWARE & ASYNC ---
-bleak==0.21.1
-aiohttp==3.9.3
-aiosqlite==0.19.0
-
-# --- UTILS ---
-python-dotenv
-htbuilder
-redis
-typing
-logging
-uuid
-jwt

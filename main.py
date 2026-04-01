@@ -1,94 +1,116 @@
-# ============================
-# PART A — Libraries + DataBus
-# ============================
-class Libraries: 
-    import os
-    import sys
-    import json
-    import time
-    import uuid
-    import logging
-    import base64
-    import hashlib
-    import threading
-    import asyncio
-    from typing import Optional, Dict, Any, List, Tuple
-    from datetime import datetime, timedelta
-    import typing
-    # HTTP / Async client
-    import aiohttp
-    import logging
 
-    # FastAPI و Pydantic
-    from fastapi import FastAPI, Depends, HTTPException, Header
-    from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
-    from fastapi.middleware.cors import CORSMiddleware
-    from pydantic import BaseModel, Field
-    from typing import Dict, Any, Optional
+import os
+import sys
+import json
+import logging
+import base64
+import hashlib
+import sqlite3
+from datetime import datetime, timedelta
+from typing import Optional, Dict, Any
 
-    # ASGI server
-    import uvicorn
+from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
+import uvicorn
 
-    # Databases
-    import sqlite3
-
-    # Caching / Queue
+# Optional imports
+try:
     import redis
+    REDIS_AVAILABLE = True
+except Exception:
+    redis = None
+    REDIS_AVAILABLE = False
 
-    # Authentication / Security
-    import jwt
-    from passlib.context import CryptContext
-    from cryptography.fernet import Fernet
+try:
+    import google.generativeai as genai
+    GENAI_AVAILABLE = True
+except Exception:
+    genai = None
+    GENAI_AVAILABLE = False
 
-    # AI client (Gemini) - optional
-    LOG = logging.getLogger("human_performance")
-    LOG.setLevel(logging.INFO)
-    class Libraries:
-     def __init__(self):
-       try:
-            import google.generativeai as genai
-            GEMINI_KEY = "AIzaSyCG7WK6t9Fn73Oq2ajJ337KRUrW57X82Ao"
-            genai.configure(api_key=GEMINI_KEY)
-            self.GENAI_AVAILABLE = True
-       except Exception:
-            self.GENAI_AVAILABLE = False
+# -------------------------
+# Configuration (env vars)
+# -------------------------
+DB_PATH = os.getenv("DB_PATH", "human_performance_v2.db")
+REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+GEMINI_KEY = os.getenv("GEMINI_KEY", "")
+SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key")  # change in prod
+ALGORITHM = os.getenv("ALGORITHM", "HS256")
+TOKEN_EXPIRY_HOURS = int(os.getenv("TOKEN_EXPIRY_HOURS", "24"))
 
+# Logging
+logging.basicConfig(level=logging.INFO)
+LOG = logging.getLogger("human_performance")
 
-# -------------------------------
-# DataBus: إدارة DB وعمليات الهجرة
-# -------------------------------
+# Configure Gemini if available and key present
+if GENAI_AVAILABLE and GEMINI_KEY:
+    try:
+        genai.configure(api_key=GEMINI_KEY)
+        LOG.info("Gemini client configured.")
+    except Exception as e:
+        LOG.warning(f"Gemini configure failed: {e}")
+        GENAI_AVAILABLE = False
+
+# -------------------------
+# Security provider (simple)
+# -------------------------
+class SecurityProvider:
+    @staticmethod
+    def hash_password(password: str) -> str:
+        # deterministic hash using SECRET_KEY as salt (simple; replace with passlib in prod)
+        salt = str(SECRET_KEY)
+        db_password = password + salt
+        return hashlib.sha256(db_password.encode()).hexdigest()
+
+    @staticmethod
+    def verify_password(plain: str, hashed: str) -> bool:
+        return SecurityProvider.hash_password(plain) == hashed
+
+    @staticmethod
+    def generate_token(data: dict) -> str:
+        payload = data.copy()
+        payload.update({"exp": datetime.utcnow() + timedelta(hours=TOKEN_EXPIRY_HOURS)})
+        import jwt
+        return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+
+    @staticmethod
+    def decode_token(token: str) -> dict:
+        import jwt
+        return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v2/auth/login")
+
+# -------------------------
+# DataBus (SQLite + optional Redis)
+# -------------------------
 class DataBus:
-    """
-    واجهة بسيطة للتعامل مع SQLite + Redis (اختياري).
-    - تتأكد من وجود الجداول المطلوبة
-    - توفر دوال لإدراج performance_logs, jobs, decisions, user_profiles
-    """
-    def __init__(self, db_path: str = "human_performance_v2.db", redis_url: str = "redis://localhost:6379/0"):
+    def __init__(self, db_path: str = DB_PATH, redis_url: str = REDIS_URL):
         self.db_path = db_path
         self.redis_url = redis_url
-        try:
-            self.redis = Libraries.redis.from_url(redis_url, decode_responses=True)
-        except Exception:
-            self.redis = None
-            Libraries.LOG.warning("Redis unavailable or not configured; continuing without Redis.")
+        self.redis = None
+        if REDIS_AVAILABLE:
+            try:
+                self.redis = redis.from_url(redis_url, decode_responses=True)
+                LOG.info("Connected to Redis.")
+            except Exception as e:
+                LOG.warning(f"Redis connection failed: {e}")
+                self.redis = None
+        else:
+            LOG.info("Redis library not available; continuing without Redis.")
         self._ensure_tables()
 
     def _connect(self):
-        return Libraries.sqlite3.connect(self.db_path, detect_types=Libraries.sqlite3.PARSE_DECLTYPES | Libraries.sqlite3.PARSE_COLNAMES)
+        return sqlite3.connect(self.db_path, detect_types=sqlite3.PARSE_DECLTYPES | sqlite3.PARSE_COLNAMES)
 
     def _ensure_tables(self):
-        """
-        ينشئ الجداول الأساسية إن لم تكن موجودة.
-        يتعامل مع إضافة أعمدة job_id و decision_id في performance_logs بأمان.
-        """
         with self._connect() as conn:
             cur = conn.cursor()
-            # users (قد تكون موجودة بالفعل في كودك الأصلي)
             cur.execute('''CREATE TABLE IF NOT EXISTS users 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                           username TEXT UNIQUE, 
                           password_hash TEXT)''')
-            # performance_logs (مع job_id و decision_id)
             cur.execute('''CREATE TABLE IF NOT EXISTS performance_logs 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                           user_id INTEGER, 
@@ -101,7 +123,6 @@ class DataBus:
                           timestamp DATETIME,
                           job_id TEXT,
                           decision_id INTEGER)''')
-            # jobs
             cur.execute('''CREATE TABLE IF NOT EXISTS jobs (
                           id INTEGER PRIMARY KEY AUTOINCREMENT,
                           job_id TEXT UNIQUE,
@@ -114,7 +135,6 @@ class DataBus:
                           started_at DATETIME,
                           finished_at DATETIME
                         )''')
-            # decisions
             cur.execute('''CREATE TABLE IF NOT EXISTS decisions (
                           id INTEGER PRIMARY KEY AUTOINCREMENT,
                           user_id INTEGER,
@@ -124,7 +144,6 @@ class DataBus:
                           outcome TEXT,
                           created_at DATETIME
                         )''')
-            # user_profiles
             cur.execute('''CREATE TABLE IF NOT EXISTS user_profiles (
                           user_id INTEGER PRIMARY KEY,
                           last_active DATETIME,
@@ -135,138 +154,144 @@ class DataBus:
                           updated_at DATETIME
                         )''')
             conn.commit()
-            Libraries.LOG.info("Database tables ensured/created.")
+            LOG.info("Database tables ensured/created.")
 
-    # -------------------------
-    # Performance log helpers
-    # -------------------------
-    def insert_performance_log(self, user_id: int, metrics: dict[str, any], performance_score: float, job_id: str | None) -> int:
+    # User helpers
+    def create_user(self, username: str, password_hash: str) -> int:
         with self._connect() as conn:
             cur = conn.cursor()
-            cur.execute("""INSERT INTO performance_logs
-                           (user_id, heart_rate, steps, screen_time, sleep_hours, performance_score, ai_recommendation, timestamp, job_id)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (user_id, metrics.get("hr"), metrics.get("steps"), metrics.get("screen_time"),
-                         metrics.get("sleep_hours"), performance_score, None, Libraries.datetime.utcnow().isoformat(), job_id))
+            cur.execute("INSERT INTO users (username, password_hash) VALUES (?, ?)", (username, password_hash))
             conn.commit()
-            log_id = cur.lastrowid
-            Libraries.LOG.debug(f"Inserted performance_log id={log_id} for user={user_id}")
-            return log_id
+            return cur.lastrowid
 
-    def update_performance_log_ai(self, log_id: int, ai_text: str):
+    def get_user(self, username: str) -> Optional[Dict[str, Any]]:
         with self._connect() as conn:
             cur = conn.cursor()
-            cur.execute("UPDATE performance_logs SET ai_recommendation = ? WHERE id = ?", (ai_text, log_id))
-            conn.commit()
-            Libraries.LOG.debug(f"Updated performance_log id={log_id} with AI text.")
+            cur.execute("SELECT id, username, password_hash FROM users WHERE username = ?", (username,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            return {"id": row[0], "username": row[1], "password_hash": row[2]}
 
-    def link_job_to_log(self, log_id: int, job_id: str):
-        with self._connect() as conn:
-            cur = conn.cursor()
-            cur.execute("UPDATE performance_logs SET job_id = ? WHERE id = ?", (job_id, log_id))
-            conn.commit()
-            Libraries.LOG.debug(f"Linked job {job_id} to log {log_id}.")
+db = DataBus()
 
-    # -------------------------
-    # Jobs management
-    # -------------------------
-    def create_job_record(self, job_id: str, user_id: int, job_type: str, payload: dict[str, any]) -> int:
-        with self._connect() as conn:
-            cur = conn.cursor()
-            cur.execute("""INSERT INTO jobs (job_id, user_id, type, payload, status, created_at)
-                           VALUES (?, ?, ?, ?, ?, ?)""",
-                        (job_id, user_id, job_type, Libraries.json.dumps(payload), "queued", Libraries.datetime.utcnow().isoformat()))
-            conn.commit()
-            jid = cur.lastrowid
-            Libraries.LOG.debug(f"Created job record {job_id} (db id {jid})")
-            return jid
+# -------------------------
+# Pydantic Schemas
+# -------------------------
+class UserAuthSchema(BaseModel):
+    username: str = Field(..., example="alice")
+    password: str = Field(..., example="secret")
 
-    def update_job_record(self, job_id: str, status: str, result: dict[str, any] | None ): 
+class HealthResponse(BaseModel):
+    status: str
+    db: bool
+    redis: bool
+    ai: bool
+    time: str
 
-        with self._connect() as conn:
-            cur = conn.cursor()
-            cur.execute("UPDATE jobs SET status = ?, result = ?, finished_at = ? WHERE job_id = ?", (status, Libraries.json.dumps(result) if result is not None else None, Libraries.datetime.utcnow().isoformat(), job_id))
-            conn.commit()
-            Libraries.LOG.debug(f"Updated job {job_id} -> {status}")
+# -------------------------
+# FastAPI app
+# -------------------------
+app = FastAPI(title="Human Performance OS v2.0", version="2.0.0",
+              description="AI-Driven Performance Orchestration System")
 
-    def push_job_to_queue(self, queue_key: str, job_id: str):
-        if self.redis:
-            try:
-                self.redis.lpush(queue_key, job_id)
-                Libraries.LOG.debug(f"Pushed job {job_id} to queue {queue_key}")
-            except Exception as e:
-                Libraries.LOG.warning(f"Failed to push job to redis queue: {e}")
-
-    def set_redis_job(self, prefix: str, job_id: str, payload: dict[str, any]):
-        if self.redis:
-            try:
-                self.redis.set(prefix + job_id, Libraries.json.dumps(payload))
-            except Exception:
-                pass
-
-    def get_redis_job(self, prefix: str, job_id: str) -> dict[str, any] | None :
-
-        if not self.redis:
-            return None
-        raw = self.redis.get(prefix + job_id)
-        return Libraries.json.loads(raw) if raw else None
-
-    # -------------------------
-    # Decision helpers
-    # -------------------------
-    def insert_decision(self, user_id: int, decision_type: str, decision_payload: dict[str, any], reason: str) -> int:
-        with self._connect() as conn:
-            cur = conn.cursor()
-            cur.execute("""INSERT INTO decisions (user_id, decision_type, decision_payload, reason, created_at)
-                           VALUES (?, ?, ?, ?, ?)""",
-                        (user_id, decision_type, Libraries.json.dumps(decision_payload), reason, Libraries.datetime.utcnow().isoformat()))
-            conn.commit()
-            did = cur.lastrowid
-            Libraries.LOG.debug(f"Inserted decision id={did} for user={user_id}")
-            return did
-
-    # -------------------------
-    # Profile helpers
-    # -------------------------
-    def upsert_user_profile(self, user_id: int, profile: dict[str, any]):
-        with self._connect() as conn:
-            cur = conn.cursor()
-            cur.execute("""INSERT OR REPLACE INTO user_profiles
-                           (user_id, last_active, avg_sleep, avg_steps, risk_score, behavior_vector, updated_at)
-                           VALUES (?, ?, ?, ?, ?, ?, ?)""",
-                        (user_id, Libraries.datetime.utcnow().isoformat(), profile.get("avg_sleep"), profile.get("avg_steps"),
-                         profile.get("risk_score"), Libraries.json.dumps(profile.get("behavior_vector", {})), Libraries.datetime.utcnow().isoformat()))
-            conn.commit()
-            Libraries.LOG.debug(f"Upserted profile for user {user_id}")
-
-    def fetch_recent_metrics(self, user_id: int, limit: int = 30):
-        with self._connect() as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT steps, sleep_hours, performance_score, timestamp FROM performance_logs WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?", (user_id, limit))
-            return cur.fetchall()
-            # إنشاء كائن التطبيق (هذا هو الـ app الذي يبحث عنه uvicorn)
-app = Libraries.FastAPI(
-    title="Human Performance OS v2.0",
-    description="AI-Driven Performance Orchestration System",
-    version="2.0.0"
-)
-
-# إعداد الـ CORS لضمان عمل الواجهة الأمامية (Frontend)
 app.add_middleware(
-    Libraries.CORSMiddleware,
+    CORSMiddleware,
     allow_origins=["*"],
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# تعريف الـ DataBus لاستخدامه في المسارات (Endpoints)
-db = DataBus()
-
-@app.get("/")
+# Root
+@app.get("/", tags=["default"])
 async def root():
-    return {"message": " Human Performance OS is Running", "status": "Online"}
+    return {"message": "Human Performance OS is Running", "status": "Online"}
 
+# Health endpoint
+@app.get("/api/v2/health", response_model=HealthResponse, tags=["System"])
+async def health():
+    db_ok = False
+    redis_ok = False
+    ai_ok = False
 
-# ============================
-# End of PART A
-# ============================
+    # DB check
+    try:
+        with sqlite3.connect(DB_PATH) as conn:
+            conn.execute("SELECT 1")
+        db_ok = True
+    except Exception as e:
+        LOG.warning(f"DB health check failed: {e}")
+        db_ok = False
+
+    # Redis check
+    try:
+        if db.redis:
+            db.redis.ping()
+            redis_ok = True
+    except Exception as e:
+        LOG.warning(f"Redis health check failed: {e}")
+        redis_ok = False
+
+    # AI check (basic)
+    try:
+        ai_ok = GENAI_AVAILABLE and bool(GEMINI_KEY)
+    except Exception:
+        ai_ok = False
+
+    status = "ok" if db_ok and (not REDIS_AVAILABLE or redis_ok) else "degraded"
+    return {"status": status, "db": db_ok, "redis": redis_ok, "ai": ai_ok, "time": datetime.utcnow().isoformat()}
+
+# -------------------------
+# Auth endpoints: register + login
+# -------------------------
+@app.post("/api/v2/auth/register", tags=["Security"])
+async def register(user: UserAuthSchema):
+    existing = db.get_user(user.username)
+    if existing:
+        raise HTTPException(status_code=400, detail="User already exists")
+    hashed = SecurityProvider.hash_password(user.password)
+    try:
+        user_id = db.create_user(user.username, hashed)
+        LOG.info(f"Registered user {user.username} id={user_id}")
+        return {"status": "success", "message": "Enrolled in OS v2.0", "user_id": user_id}
+    except sqlite3.IntegrityError:
+        raise HTTPException(status_code=400, detail="User already exists")
+    except Exception as e:
+        LOG.error(f"Register failed: {e}")
+        raise HTTPException(status_code=500, detail="Registration failed")
+
+@app.post("/api/v2/auth/login", tags=["Security"])
+async def login(form_data: OAuth2PasswordRequestForm = Depends()):
+    user = db.get_user(form_data.username)
+    if not user or not SecurityProvider.verify_password(form_data.password, user["password_hash"]):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Credentials")
+    token = SecurityProvider.generate_token({"sub": user["username"], "user_id": user["id"]})
+    return {"access_token": token, "token_type": "bearer"}
+
+# Dependency to get current user from token
+async def get_current_user(token: str = Depends(oauth2_scheme)):
+    try:
+        payload = SecurityProvider.decode_token(token)
+        username = payload.get("sub")
+        user_id = payload.get("user_id")
+        if not username:
+            raise HTTPException(status_code=401, detail="Invalid token")
+        user = db.get_user(username)
+        if not user:
+            raise HTTPException(status_code=401, detail="User not found")
+        return {"id": user_id, "username": username}
+    except Exception as e:
+        LOG.warning(f"Token decode failed: {e}")
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
+
+# Example protected endpoint
+@app.get("/api/v2/me", tags=["Security"])
+async def me(current_user: dict = Depends(get_current_user)):
+    return {"user": current_user}
+
+# -------------------------
+# Run (for direct execution)
+# -------------------------
+if __name__ == "__main__":
+    LOG.info("Starting Human Performance OS (part1)...")
+    uvicorn.run("main_fixed_part1:app", host="0.0.0.0", port=8000, reload=True)

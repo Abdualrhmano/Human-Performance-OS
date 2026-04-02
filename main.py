@@ -103,25 +103,39 @@ class SecurityProvider:
     def generate_token(data: dict) -> str:
         # Use pyjwt if available (production / preferred)
         if jwt is not None:
-            payload = data.copy()
-            payload.update({"exp": datetime.utcnow() + timedelta(hours=TOKEN_EXPIRY_HOURS)})
-            token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
-            if isinstance(token, bytes):
-                token = token.decode("utf-8")
-            return token
+            try:
+                payload = data.copy()
+                payload.update({"exp": datetime.utcnow() + timedelta(hours=TOKEN_EXPIRY_HOURS)})
+                token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+                if isinstance(token, bytes):
+                    token = token.decode("utf-8")
+                return token
+            except Exception as e:
+                LOG.warning("pyjwt token generation failed, falling back to dev token: %s", e)
+                LOG.debug(traceback.format_exc())
 
         # Fallback for local/dev environments: simple base64-encoded JSON token with "devtoken." prefix
-        payload = data.copy()
-        payload.update({"exp": (datetime.utcnow() + timedelta(hours=TOKEN_EXPIRY_HOURS)).isoformat()})
-        raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
-        b64 = base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
-        return f"devtoken.{b64}"
+        try:
+            payload = data.copy()
+            payload.update({"exp": (datetime.utcnow() + timedelta(hours=TOKEN_EXPIRY_HOURS)).isoformat()})
+            raw = json.dumps(payload, separators=(",", ":"), ensure_ascii=False).encode("utf-8")
+            b64 = base64.urlsafe_b64encode(raw).decode("utf-8").rstrip("=")
+            return f"devtoken.{b64}"
+        except Exception as e:
+            LOG.error("Dev token generation failed: %s", e)
+            LOG.error(traceback.format_exc())
+            raise RuntimeError("Token generation failed")
 
     @staticmethod
     def decode_token(token: str) -> dict:
         # If pyjwt is available, decode normally
         if jwt is not None:
-            return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            try:
+                return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            except Exception as e:
+                LOG.warning("pyjwt decode failed: %s", e)
+                LOG.debug(traceback.format_exc())
+                raise RuntimeError("Invalid or expired token")
 
         # Fallback decode for devtoken.<base64>
         try:
@@ -581,10 +595,30 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     try:
         # debug: log incoming username (avoid logging passwords)
         LOG.debug("Login attempt for username: %s", getattr(form_data, "username", "<unknown>"))
-        user = db.get_user(form_data.username)
-        if not user or not SecurityProvider.verify_password(form_data.password, user["password_hash"]):
+        username = getattr(form_data, "username", None)
+        password = getattr(form_data, "password", None)
+
+        if not username or not password:
+            LOG.warning("Login missing username or password (username=%s)", username)
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="username and password required")
+
+        user = db.get_user(username)
+        if not user:
+            LOG.info("Login failed: user not found: %s", username)
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Credentials")
-        token = SecurityProvider.generate_token({"sub": user["username"], "user_id": user["id"]})
+
+        if not SecurityProvider.verify_password(password, user["password_hash"]):
+            LOG.info("Login failed: invalid password for user: %s", username)
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Credentials")
+
+        # Generate token (robust)
+        try:
+            token = SecurityProvider.generate_token({"sub": user["username"], "user_id": user["id"]})
+        except Exception as e:
+            LOG.error("Token generation error for user %s: %s", username, e)
+            LOG.error(traceback.format_exc())
+            raise HTTPException(status_code=500, detail="Authentication token generation failed")
+
         return {"access_token": token, "token_type": "bearer"}
     except HTTPException:
         raise
@@ -714,19 +748,212 @@ async def submit_feedback(decision_id: int, payload: dict, current_user: dict = 
             avg_sleep = sum(sleep)/len(sleep)
             risk = max(0.0, 1.0 - (avg_sleep/8.0) - (avg_steps/10000.0))
             behavior_vector = {"steps_trend": avg_steps, "sleep_trend": avg_sleep, "perf_mean": sum(perf)/len(perf)}
-            profile = {"avg_steps":avg_steps, "avg_sleep":avg_sleep, "risk_score":risk, "behavior_vector":behavior_vector}
+            profile = {"avg_steps": avg_steps, "avg_sleep": avg_sleep, "risk_score": risk, "behavior_vector": behavior_vector}
         db.upsert_behavioral_profile(uid, profile)
     try:
-        if background_tasks is not None:
+        if background_tasks:
             background_tasks.add_task(recompute_profile, current_user["id"])
-        else:
-            recompute_profile(current_user["id"])
     except Exception:
-        LOG.exception("Failed to schedule recompute_profile")
-    return {"feedback_id": fid}
+        LOG.debug("Background profile recompute scheduling failed")
+    return {"status": "ok", "feedback_id": fid}
+
+@app.get("/api/v2/decision/{decision_id}/insight", tags=["Decision"])
+async def decision_insight(decision_id: int, current_user: dict = Depends(get_current_user)):
+    dec = db.fetch_decision(decision_id)
+    if not dec:
+        raise HTTPException(status_code=404, detail="Decision not found")
+    with sqlite3.connect(DB_PATH) as conn:
+        cur = conn.cursor()
+        cur.execute("SELECT id, feedback_type, feedback_value, observed_effect, created_at FROM feedbacks WHERE decision_id = ?", (decision_id,))
+        feedback_rows = cur.fetchall()
+    feedbacks = []
+    for r in feedback_rows:
+        feedbacks.append({
+            "id": r[0],
+            "feedback_type": r[1],
+            "feedback_value": json.loads(r[2]) if r[2] else None,
+            "observed_effect": json.loads(r[3]) if r[3] else None,
+            "created_at": r[4]
+        })
+    dec["feedbacks"] = feedbacks
+    return dec
 
 # -------------------------
-# Runner
+# Scheduler: periodic_check
+# -------------------------
+if APS_AVAILABLE:
+    scheduler = BackgroundScheduler()
+    def periodic_check():
+        LOG.info("Periodic check started")
+        try:
+            with sqlite3.connect(DB_PATH) as conn:
+                cur = conn.cursor()
+                cur.execute("SELECT DISTINCT user_id FROM performance_logs WHERE timestamp > datetime('now','-1 day')")
+                users = [r[0] for r in cur.fetchall()]
+        except Exception as e:
+            LOG.error("Periodic check DB read failed: %s", e)
+            users = []
+
+        ai_client = AIClient(api_key=GEMINI_KEY)
+        for uid in users:
+            try:
+                with sqlite3.connect(DB_PATH) as conn:
+                    cur = conn.cursor()
+                    cur.execute("SELECT heart_rate, hr, steps, screen_time, sleep_hours, timestamp FROM performance_logs WHERE user_id = ? ORDER BY timestamp DESC LIMIT 1", (uid,))
+                    row = cur.fetchone()
+                if not row:
+                    continue
+                hr_val = row[1] if row[1] is not None else row[0]
+                payload = {
+                    "hr": hr_val,
+                    "steps": row[2],
+                    "screen_time": row[3],
+                    "sleep_hours": row[4],
+                    "timestamp": row[5],
+                    "user_id": uid
+                }
+                decision = run_agents_and_decide(uid, payload, ai_client=ai_client)
+                action = decision.get("action")
+                confidence = float(decision.get("confidence", 0.0) or 0.0)
+                severity_high = any(isinstance(r, dict) and r.get("severity") == "high" for r in decision.get("agent_reports", []) or [])
+                if action == "auto_act" and (confidence < 0.9 and not severity_high):
+                    LOG.info("Periodic: downgrading auto_act to nudge for user %s (conf=%s)", uid, confidence)
+                    action = "nudge"
+                    decision["reason"] = (decision.get("reason","") or "") + " (downgraded due to confidence)"
+                job_id = str(uuid.uuid4())
+                did = db.insert_decision(job_id=job_id, user_id=uid, decision_type=action, decision_payload={"agent_reports": decision.get("agent_reports"), "payload": payload}, reason=decision.get("reason",""), confidence=decision.get("confidence",0.0), executor="scheduler")
+                LOG.info("Periodic decision created id=%s for user %s action=%s", did, uid, action)
+            except Exception as e:
+                LOG.exception("Periodic decision failed for user %s: %s", uid, e)
+
+    try:
+        scheduler.add_job(periodic_check, 'interval', minutes=15, id='periodic_check')
+        scheduler.start()
+        LOG.info("Scheduler started (periodic_check every 15 minutes)")
+    except Exception as e:
+        LOG.warning("Scheduler failed to start: %s", e)
+else:
+    LOG.info("APScheduler not available; periodic checks disabled.")
+
+# -------------------------
+# Executor loop (background thread) - robust: Redis first, SQLite fallback
+# -------------------------
+_worker_thread = None
+_worker_stop = threading.Event()
+
+def process_execution_item(exec_record: Dict[str, Any]):
+    LOG.info("Processing execution: %s", exec_record.get("exec_id"))
+    try:
+        exec_id = exec_record.get("exec_id") or exec_record.get("job_id")
+        if exec_id:
+            with sqlite3.connect(DB_PATH) as conn:
+                cur = conn.cursor()
+                cur.execute("UPDATE jobs SET status=?, finished_at=? WHERE job_id=?", ("done", datetime.utcnow().isoformat(), exec_id))
+                conn.commit()
+    except Exception:
+        LOG.exception("Failed to mark job done for exec_record")
+
+def process_executions_loop():
+    LOG.info("Executor loop started (robust)")
+    while not _worker_stop.is_set():
+        try:
+            item = None
+            # Try Redis first if available
+            if db.redis and db.redis_available:
+                try:
+                    raw = db.redis.rpop("executions")
+                    if raw:
+                        if isinstance(raw, bytes):
+                            raw = raw.decode("utf-8")
+                        try:
+                            item = json.loads(raw)
+                        except Exception:
+                            item = {"raw": raw}
+                except Exception as e:
+                    LOG.warning("Redis rpop failed: %s. Disabling redis and falling back to sqlite.", e)
+                    try:
+                        if hasattr(db.redis, "close"):
+                            db.redis.close()
+                    except Exception:
+                        pass
+                    db.redis = None
+                    db.redis_available = False
+
+            # If no item from Redis, try SQLite fallback queue
+            if item is None:
+                item = db.dequeue_execution_fallback()
+
+            if item:
+                try:
+                    process_execution_item(item)
+                except Exception as e:
+                    LOG.exception("Error processing item: %s", e)
+            else:
+                time.sleep(2)
+        except Exception as e:
+            LOG.exception("Executor loop unexpected error: %s", e)
+            time.sleep(5)
+    LOG.info("Executor loop stopped.")
+
+def start_executor_background_thread():
+    global _worker_thread
+    if _worker_thread and _worker_thread.is_alive():
+        LOG.info("Executor already running")
+        return
+    _worker_stop.clear()
+    _worker_thread = threading.Thread(target=process_executions_loop, daemon=True)
+    _worker_thread.start()
+    LOG.info("Executor background thread started")
+
+def stop_executor_background_thread():
+    _worker_stop.set()
+    if _worker_thread:
+        _worker_thread.join(timeout=3.0)
+    LOG.info("Executor background thread stopped")
+
+# Start executor thread always (it will use fallback if Redis not available)
+start_executor_background_thread()
+
+# -------------------------
+# App startup/shutdown events
+# -------------------------
+@app.on_event("startup")
+def on_startup():
+    db._ensure_tables()
+    # re-check redis availability
+    if REDIS_LIB_AVAILABLE and db.redis:
+        try:
+            db.redis.ping()
+            db.redis_available = True
+        except Exception:
+            db.redis_available = False
+    LOG.info("App startup complete. Redis available=%s", getattr(db, "redis_available", False))
+
+@app.on_event("shutdown")
+def on_shutdown():
+    stop_executor_background_thread()
+    try:
+        if db.redis and hasattr(db.redis, "close"):
+            db.redis.close()
+    except Exception:
+        pass
+    if APS_AVAILABLE:
+        try:
+            scheduler.shutdown(wait=False)
+        except Exception:
+            pass
+    LOG.info("App shutdown complete.")
+
+# -------------------------
+# Run app
 # -------------------------
 if __name__ == "__main__":
-    uvicorn.run("main_part3:app", host="0.0.0.0", port=int(os.getenv("PORT", "8000")), log_level="info")
+    LOG.info("Starting Human Performance OS v3 (main_part3)...")
+    db._ensure_tables()
+    if REDIS_LIB_AVAILABLE and db.redis and db.redis_available:
+        LOG.info("Redis is available and will be used for queues.")
+    elif FAKEREDIS_AVAILABLE and db.redis and db.redis_available:
+        LOG.info("fakeredis in use (development).")
+    else:
+        LOG.info("No Redis available; using SQLite fallback for queues.")
+    uvicorn.run("main_part3:app", host="0.0.0.0", port=8000, reload=True)

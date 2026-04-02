@@ -1,10 +1,11 @@
 # main_part3.py
 """
-Human Performance OS - main_part3 (with robust Redis fallback)
-- Uses real Redis if available
-- Falls back to fakeredis (in-memory) for development if real Redis not available
-- Falls back to SQLite queue when neither Redis nor fakeredis are available
-- Minimal, focused changes to ensure the app runs without system-level Redis
+Human Performance OS - main_part3 (robust, full)
+- Robust Redis handling with fakeredis + SQLite fallback
+- Safe executor loop that works even if Redis is down
+- Ensure DB schema includes required columns
+- Clearer logging and error handling (prints full traceback on login errors)
+- Minimal external requirements for local development
 """
 
 import os
@@ -14,6 +15,7 @@ import logging
 import sqlite3
 import time
 import threading
+import traceback
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 
@@ -22,7 +24,12 @@ from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import uvicorn
-import jwt
+
+# JWT library (pyjwt)
+try:
+    import jwt
+except Exception:
+    jwt = None
 
 # Try real redis
 try:
@@ -40,12 +47,13 @@ except Exception:
     fakeredis = None
     FAKEREDIS_AVAILABLE = False
 
-# Agents (if missing, provide safe fallback)
+# Agents (project-specific; safe fallback if missing)
 try:
     from agents import AIClient, run_agents_and_decide
 except Exception:
     def run_agents_and_decide(user_id, payload, ai_client=None):
         return {"action": "monitor", "confidence": 0.0, "reason": "agents_unavailable", "agent_reports": []}
+
     class AIClient:
         def __init__(self, api_key=None):
             self.api_key = api_key
@@ -70,6 +78,7 @@ GEMINI_KEY = os.getenv("GEMINI_KEY", "")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 LOG = logging.getLogger("main_part3")
 
+# OAuth2: tokenUrl must match the login endpoint path
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v2/auth/login")
 
 # -------------------------
@@ -84,16 +93,27 @@ class SecurityProvider:
 
     @staticmethod
     def verify_password(plain: str, hashed: str) -> bool:
-        return SecurityProvider.hash_password(plain) == hashed
+        try:
+            return SecurityProvider.hash_password(plain) == hashed
+        except Exception:
+            return False
 
     @staticmethod
     def generate_token(data: dict) -> str:
+        if jwt is None:
+            raise RuntimeError("pyjwt is not installed")
         payload = data.copy()
         payload.update({"exp": datetime.utcnow() + timedelta(hours=TOKEN_EXPIRY_HOURS)})
-        return jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+        token = jwt.encode(payload, SECRET_KEY, algorithm=ALGORITHM)
+        # pyjwt may return bytes in some versions
+        if isinstance(token, bytes):
+            token = token.decode("utf-8")
+        return token
 
     @staticmethod
     def decode_token(token: str) -> dict:
+        if jwt is None:
+            raise RuntimeError("pyjwt is not installed")
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
 
 # -------------------------
@@ -115,7 +135,7 @@ class DataBus:
                     self.redis_available = True
                     LOG.info("Connected to real Redis at %s", redis_url)
                 except Exception as e:
-                    LOG.warning("Real Redis ping failed: %s", e)
+                    LOG.warning("Real Redis ping failed during init: %s", e)
                     self.redis = None
                     self.redis_available = False
             except Exception as e:
@@ -128,9 +148,7 @@ class DataBus:
         # If real Redis not available, try fakeredis (development)
         if not self.redis_available and FAKEREDIS_AVAILABLE:
             try:
-                # FakeRedis with decode_responses to mimic redis-py behavior
                 self.redis = fakeredis.FakeRedis(decode_responses=True)
-                # FakeRedis supports ping
                 self.redis.ping()
                 self.redis_available = True
                 LOG.info("Using fakeredis (in-memory) as Redis fallback for development.")
@@ -148,10 +166,12 @@ class DataBus:
     def _ensure_tables(self):
         with self._connect() as conn:
             cur = conn.cursor()
+            # users
             cur.execute('''CREATE TABLE IF NOT EXISTS users 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                           username TEXT UNIQUE, 
                           password_hash TEXT)''')
+            # performance_logs: include hr and heart_rate for compatibility
             cur.execute('''CREATE TABLE IF NOT EXISTS performance_logs 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                           user_id INTEGER, 
@@ -165,6 +185,7 @@ class DataBus:
                           timestamp DATETIME,
                           job_id TEXT,
                           decision_id INTEGER)''')
+            # jobs
             cur.execute('''CREATE TABLE IF NOT EXISTS jobs (
                           id INTEGER PRIMARY KEY AUTOINCREMENT,
                           job_id TEXT UNIQUE,
@@ -177,6 +198,7 @@ class DataBus:
                           started_at DATETIME,
                           finished_at DATETIME
                         )''')
+            # decisions
             cur.execute('''CREATE TABLE IF NOT EXISTS decisions (
                           id INTEGER PRIMARY KEY AUTOINCREMENT,
                           job_id TEXT,
@@ -190,6 +212,7 @@ class DataBus:
                           outcome_recorded INTEGER DEFAULT 0,
                           outcome_id INTEGER
                         )''')
+            # feedbacks
             cur.execute('''CREATE TABLE IF NOT EXISTS feedbacks (
                           id INTEGER PRIMARY KEY AUTOINCREMENT,
                           decision_id INTEGER,
@@ -200,6 +223,7 @@ class DataBus:
                           created_at DATETIME,
                           FOREIGN KEY(decision_id) REFERENCES decisions(id)
                         )''')
+            # behavioral_profiles
             cur.execute('''CREATE TABLE IF NOT EXISTS behavioral_profiles (
                           user_id INTEGER PRIMARY KEY,
                           last_active DATETIME,
@@ -232,6 +256,7 @@ class DataBus:
                           created_at DATETIME DEFAULT (datetime('now')),
                           sent_at DATETIME
                         )''')
+            # indexes
             cur.execute("CREATE INDEX IF NOT EXISTS idx_decisions_user ON decisions(user_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedbacks(user_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_perflogs_user_time ON performance_logs(user_id, timestamp)")
@@ -338,19 +363,64 @@ class DataBus:
             payload["exec_id"] = exec_id
             return payload
 
-    # Notifications (simple)
-    def create_notification(self, user_id: int, level: str, title: str, message: str, channel: str = "inapp", payload: dict = None):
+    # Decisions & Feedback & Profiles
+    def insert_decision(self, job_id: str, user_id: int, decision_type: str, decision_payload: dict, reason: str, confidence: float, executor: str = "executive") -> int:
         with self._connect() as conn:
             cur = conn.cursor()
-            cur.execute("INSERT INTO notifications (user_id, level, title, message, payload, channel) VALUES (?, ?, ?, ?, ?, ?)",
-                        (user_id, level, title, message, json.dumps(payload or {}), channel))
+            cur.execute("""INSERT INTO decisions (job_id, user_id, decision_type, decision_payload, reason, confidence, executor, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (job_id, user_id, decision_type, json.dumps(decision_payload), reason, confidence, executor, datetime.utcnow().isoformat()))
             conn.commit()
             return cur.lastrowid
 
-    def fetch_pending_notifications(self):
+    def insert_feedback(self, decision_id: int, user_id: int, feedback_type: str, feedback_value: dict, observed_effect: Optional[dict] = None) -> int:
         with self._connect() as conn:
             cur = conn.cursor()
-            cur.execute("SELECT id, user_id, level, title, message, payload, channel FROM notifications WHERE status='pending' ORDER BY created_at ASC LIMIT 50")
+            cur.execute("""INSERT INTO feedbacks (decision_id, user_id, feedback_type, feedback_value, observed_effect, created_at)
+                           VALUES (?, ?, ?, ?, ?, ?)""",
+                        (decision_id, user_id, feedback_type, json.dumps(feedback_value), json.dumps(observed_effect) if observed_effect else None, datetime.utcnow().isoformat()))
+            conn.commit()
+            fid = cur.lastrowid
+            cur.execute("UPDATE decisions SET outcome_recorded = 1, outcome_id = ? WHERE id = ?", (fid, decision_id))
+            conn.commit()
+            return fid
+
+    def fetch_decision(self, decision_id: int) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id, job_id, user_id, decision_type, decision_payload, reason, confidence, executor, created_at, outcome_recorded, outcome_id FROM decisions WHERE id = ?", (decision_id,))
+            row = cur.fetchone()
+            if not row:
+                return None
+            return {
+                "id": row[0],
+                "job_id": row[1],
+                "user_id": row[2],
+                "decision_type": row[3],
+                "decision_payload": json.loads(row[4]) if row[4] else None,
+                "reason": row[5],
+                "confidence": row[6],
+                "executor": row[7],
+                "created_at": row[8],
+                "outcome_recorded": bool(row[9]),
+                "outcome_id": row[10]
+            }
+
+    def upsert_behavioral_profile(self, user_id: int, profile: dict):
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute("""INSERT OR REPLACE INTO behavioral_profiles
+                           (user_id, last_active, avg_sleep, avg_steps, focus_drop_after_hours, chronotype, risk_score, behavior_vector, updated_at)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (user_id, datetime.utcnow().isoformat(), profile.get("avg_sleep"), profile.get("avg_steps"),
+                         profile.get("focus_drop_after_hours"), profile.get("chronotype"), profile.get("risk_score"),
+                         json.dumps(profile.get("behavior_vector", {})), datetime.utcnow().isoformat()))
+            conn.commit()
+
+    def fetch_recent_metrics(self, user_id: int, limit: int = 30):
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT steps, sleep_hours, performance_score, timestamp FROM performance_logs WHERE user_id = ? ORDER BY timestamp DESC LIMIT ?", (user_id, limit))
             return cur.fetchall()
 
 # instantiate DataBus
@@ -414,7 +484,7 @@ class ProfileService:
         self.db = db
 
     def compute_profile(self, user_id: int) -> dict:
-        rows = self.db.fetch_recent_metrics(user_id, limit=30) if hasattr(self.db, "fetch_recent_metrics") else []
+        rows = self.db.fetch_recent_metrics(user_id, limit=30)
         if not rows:
             profile = {"avg_steps":0, "avg_sleep":0, "risk_score":0.0, "behavior_vector":{}}
             self.db.upsert_behavioral_profile(user_id, profile)
@@ -478,6 +548,8 @@ async def register(user: UserAuthSchema):
 @app.post("/api/v2/auth/login", tags=["Security"])
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     try:
+        # debug: log incoming username (avoid logging passwords)
+        LOG.debug("Login attempt for username: %s", getattr(form_data, "username", "<unknown>"))
         user = db.get_user(form_data.username)
         if not user or not SecurityProvider.verify_password(form_data.password, user["password_hash"]):
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Credentials")
@@ -486,7 +558,9 @@ async def login(form_data: OAuth2PasswordRequestForm = Depends()):
     except HTTPException:
         raise
     except Exception as e:
-        LOG.exception("Login endpoint error")
+        # print full traceback to logs for debugging
+        LOG.error("Login endpoint exception: %s", e)
+        LOG.error(traceback.format_exc())
         raise HTTPException(status_code=500, detail="Server error during login")
 
 async def get_current_user(token: str = Depends(oauth2_scheme)):

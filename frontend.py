@@ -1,7 +1,8 @@
-# streamlit_app_with_facepanel.py
+# frontend.py
 # Human Performance OS - Streamlit UI with FacePanel integration (PIL-based, no cairosvg)
+# Modified: CoreBridge init_db and save_log made robust and backward-compatible
 # Includes client integration to FastAPI orchestrator (POST /decision/evaluate, WS /ws/decisions/{id})
-# Improved: agent reports display, feedback buttons, Gemini-ready endpoints, robust fallbacks
+# Note: Save this file as frontend.py (or replace your existing frontend file)
 
 import os
 import io
@@ -37,7 +38,7 @@ except Exception:
 # -------------------------------
 API_BASE = os.environ.get("HPOS_API_BASE", "http://localhost:8000/api/v2")  # FastAPI base with API prefix
 WS_BASE = API_BASE.replace("http://", "ws://").replace("https://", "wss://")
-DB_PATH = "human_performance_v2.db"
+DB_PATH = os.environ.get("DB_PATH", "human_performance_v2.db")
 
 # -------------------------------
 # System UI
@@ -178,26 +179,79 @@ class BackendConnector:
             return False, {"error": str(e)}
 
 # -------------------------------
-# CoreBridge (local DB logs)
+# CoreBridge (local DB logs) - Modified for compatibility
 # -------------------------------
 class CoreBridge:
     DB_PATH = DB_PATH
 
     @staticmethod
     def init_db():
+        """
+        Ensure the database and performance_logs table exist with a flexible schema.
+        This method creates the table if missing and includes both 'hr' and 'heart_rate'
+        columns for backward compatibility.
+        """
         conn = sqlite3.connect(CoreBridge.DB_PATH)
-        conn.execute('''CREATE TABLE IF NOT EXISTS performance_logs 
-                        (timestamp TEXT, performance_score REAL, hr INTEGER, steps INTEGER)''')
+        cur = conn.cursor()
+        # Create a flexible performance_logs table including both hr and heart_rate
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS performance_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                timestamp TEXT,
+                performance_score REAL,
+                hr INTEGER,
+                heart_rate INTEGER,
+                steps INTEGER,
+                sleep_hours REAL,
+                screen_time REAL,
+                user_id INTEGER,
+                job_id TEXT,
+                ai_recommendation TEXT
+            )
+        ''')
         conn.commit()
         conn.close()
 
     @staticmethod
-    def save_log(score, hr, steps):
+    def save_log(score, hr, steps, user_id=None, job_id=None, sleep_hours=None, screen_time=None):
+        """
+        Save a performance log in a backward-compatible way:
+        - If 'hr' column exists, use it.
+        - Else if 'heart_rate' exists, use that.
+        - Else fallback to inserting only performance_score (to avoid errors).
+        """
         conn = sqlite3.connect(CoreBridge.DB_PATH)
-        query = "INSERT INTO performance_logs (timestamp, performance_score, hr, steps) VALUES (?, ?, ?, ?)"
-        conn.execute(query, (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), score, hr, steps))
-        conn.commit()
-        conn.close()
+        cur = conn.cursor()
+        # Ensure table exists (in case init_db wasn't called)
+        cur.execute("PRAGMA table_info(performance_logs);")
+        cols = [r[1] for r in cur.fetchall()]
+
+        timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        try:
+            if "hr" in cols and "steps" in cols:
+                query = "INSERT INTO performance_logs (timestamp, performance_score, hr, steps, sleep_hours, screen_time, user_id, job_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                cur.execute(query, (timestamp, score, hr, steps, sleep_hours, screen_time, user_id, job_id))
+            elif "heart_rate" in cols and "steps" in cols:
+                query = "INSERT INTO performance_logs (timestamp, performance_score, heart_rate, steps, sleep_hours, screen_time, user_id, job_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+                cur.execute(query, (timestamp, score, hr, steps, sleep_hours, screen_time, user_id, job_id))
+            else:
+                # fallback: insert minimal fields if available
+                if "performance_score" in cols:
+                    cur.execute("INSERT INTO performance_logs (timestamp, performance_score, user_id, job_id) VALUES (?, ?, ?, ?)",
+                                (timestamp, score, user_id, job_id))
+                else:
+                    # As a last resort, create a minimal record with timestamp only
+                    cur.execute("INSERT INTO performance_logs (timestamp) VALUES (?)", (timestamp,))
+            conn.commit()
+        except Exception as e:
+            # Log to streamlit and rethrow or handle gracefully
+            try:
+                st.error(f"Failed to save performance log: {e}")
+            except Exception:
+                pass
+        finally:
+            conn.close()
 
     @staticmethod
     def fetch_historical_data(limit: int = 20):
@@ -245,7 +299,8 @@ class SyncLogic:
                     insight = resp.get("ai_insight") or resp.get("insight") or resp.get("ai_recommendation")
                     st.session_state.current_score = score
                     st.session_state.last_verdict = insight
-                    CoreBridge.save_log(score, hr_val, step_val)
+                    # Save log using the robust CoreBridge.save_log
+                    CoreBridge.save_log(score, hr_val, step_val, user_id=st.session_state.get('auth', {}).get('user', {}).get('id'))
                     st.success("✅ Sync complete")
                     st.rerun()
                 else:

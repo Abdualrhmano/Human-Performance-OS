@@ -151,7 +151,7 @@ class AuthManager:
                 ok, resp = AuthManager.login(username, password)
                 if ok:
                     st.success("Signed in successfully.")
-                    st.experimental_rerun()
+                    st.rerun()
                 else:
                     st.error(f"Login failed: {resp.get('error')}")
         with col2:

@@ -1,11 +1,12 @@
 # frontend.py
 """
-Human Performance OS - Streamlit UI (enhanced FacePanel)
+Human Performance OS - Streamlit UI (final integrated)
 - Robust text sizing (Pillow compatibility)
-- Improved FacePanel visuals: badges, confidence ring, icons, explanatory shapes
-- Safe Bluetooth scanning (bleak fallback / mock)
-- Backend integration via BackendConnector (uses API_BASE env)
-- Defensive error handling and clear logging
+- FacePanel visuals with defensive fixes (no AttributeError from ImageDraw)
+- Backend submission adjusted to avoid 422 (user_id as query param)
+- Safe BLE scanning with graceful fallback
+- ChartRenderer class integrated for generating charts (matplotlib)
+- Minimal, targeted changes only where errors occurred
 """
 
 import os
@@ -51,7 +52,7 @@ except Exception:
     WS_CLIENT_AVAILABLE = False
 
 # -------------------------
-# Utilities: fonts & text sizing
+# Utilities: fonts & robust text sizing
 # -------------------------
 def load_font(size: int = 16, bold: bool = False) -> ImageFont.ImageFont:
     """Load a TrueType font with fallbacks."""
@@ -70,35 +71,35 @@ def load_font(size: int = 16, bold: bool = False) -> ImageFont.ImageFont:
 def get_text_size(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont) -> Tuple[int, int]:
     """
     Robust text size helper:
-    - prefer textbbox
-    - fallback to textsize, font.getsize
-    - final conservative estimate
+    - prefer textbbox (accurate, newer Pillow)
+    - fallback to draw.textsize if available
+    - fallback to font.getsize if available
+    - final conservative estimate to avoid crashes
     """
-    # Prefer textbbox (available in newer Pillow)
+    # Try textbbox first (newer Pillow)
     try:
         bbox = draw.textbbox((0, 0), text, font=font)
         return bbox[2] - bbox[0], bbox[3] - bbox[1]
     except Exception:
         pass
 
-    # Some Pillow versions provide textsize on ImageDraw, but not all
+    # Try draw.textsize if present
     try:
-        # Use getattr to avoid AttributeError in environments where textsize is missing
         textsize_fn = getattr(draw, "textsize", None)
         if callable(textsize_fn):
             return textsize_fn(text, font=font)
     except Exception:
         pass
 
-    # Fallback to font.getsize if available
+    # Try font.getsize
     try:
-        size = getattr(font, "getsize", None)
-        if callable(size):
-            return size(text)
+        getsize_fn = getattr(font, "getsize", None)
+        if callable(getsize_fn):
+            return getsize_fn(text)
     except Exception:
         pass
 
-    # Conservative estimate if nothing else works
+    # Conservative fallback estimate
     avg_char_w = max(6, int(getattr(font, "size", 16) * 0.5))
     return (len(text) * avg_char_w, int(avg_char_w * 1.6))
 
@@ -110,6 +111,7 @@ class BackendConnector:
 
     @staticmethod
     def _url(path: str) -> str:
+        # Accept path with query string; ensure no double slashes
         p = path.lstrip("/")
         return f"{BackendConnector.BASE}{API_PREFIX}/{p}"
 
@@ -227,17 +229,19 @@ def scan_bluetooth_devices(timeout: int = 4) -> List[Dict[str, str]]:
         LOG.info("BLE not available in this environment.")
         return []
     try:
-        import asyncio
         async def _scan():
             found = await BleakScanner.discover(timeout=timeout)
             return [{"name": d.name or "<unknown>", "address": d.address} for d in found]
         return asyncio.run(_scan())
+    except FileNotFoundError as e:
+        LOG.warning("BLE backend not available (FileNotFoundError): %s", e)
+        return []
     except Exception as e:
         LOG.warning("BLE scan failed: %s", e)
         return []
 
 # -------------------------
-# FacePanel (enhanced visuals)
+# FacePanel (enhanced visuals, fixed textsize usage)
 # -------------------------
 class FacePanel:
     DEFAULT_SIZE = (900, 600)
@@ -259,12 +263,9 @@ class FacePanel:
     def _draw_confidence_ring(draw: ImageDraw.ImageDraw, center: Tuple[int, int], radius: int, confidence: float, color=(0, 200, 120, 220)):
         cx, cy = center
         bbox = [cx - radius, cy - radius, cx + radius, cy + radius]
-        # background ring
         draw.ellipse(bbox, fill=(10, 10, 10, 200))
-        # progress pieslice
         end_angle = int(360 * max(0.0, min(1.0, confidence)))
         draw.pieslice(bbox, start=-90, end=-90 + end_angle, fill=color)
-        # inner cutout
         inner = int(radius * 0.62)
         draw.ellipse([cx - inner, cy - inner, cx + inner, cy + inner], fill=(0, 0, 0, 0))
 
@@ -273,11 +274,11 @@ class FacePanel:
         try:
             draw.rounded_rectangle(rect, radius=radius, fill=fill, outline=outline, width=width)
         except Exception:
-            # fallback: normal rectangle
             draw.rectangle(rect, fill=fill, outline=outline, width=width)
 
     @staticmethod
     def _wrap_text(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFont, max_width: int) -> List[str]:
+        text = " ".join(str(text).split())
         words = text.split()
         lines = []
         cur = ""
@@ -299,7 +300,6 @@ class FacePanel:
         w, h = FacePanel.DEFAULT_SIZE
         base = Image.new("RGBA", (w, h), (12, 14, 18, 255))
 
-        # left panel for face
         left_w = int(w * 0.66)
         right_w = w - left_w
 
@@ -312,34 +312,41 @@ class FacePanel:
                 fy = (h - face.size[1]) // 2
                 base.paste(face, (fx, fy), face)
             else:
-                # placeholder circle avatar
                 ph = Image.new("RGBA", (left_w - 40, h - 80), (0, 0, 0, 0))
                 pd = ImageDraw.Draw(ph)
                 cx = ph.size[0] // 2
                 cy = ph.size[1] // 2
                 r = min(cx, cy) - 20
                 pd.ellipse((cx - r, cy - r, cx + r, cy + r), fill=(30, 40, 60, 255))
-                # subtle glow
-                glow = ph.filter(ImageFilter.GaussianBlur(radius=6))
-                base.paste(glow, (20, (h - ph.size[1]) // 2), glow)
+                try:
+                    glow = ph.filter(ImageFilter.GaussianBlur(radius=6))
+                    base.paste(glow, (20, (h - ph.size[1]) // 2), glow)
+                except Exception:
+                    pass
                 base.paste(ph, (20, (h - ph.size[1]) // 2), ph)
         except Exception as e:
             LOG.exception("Face paste failed: %s", e)
 
-        # overlay for right panel UI
         overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
 
-        # fonts
         font_b = load_font(size=18, bold=True)
         font_m = load_font(size=14, bold=False)
         font_s = load_font(size=12, bold=False)
 
-        # Decision summary badge (top-left)
-        badge_text = (decision.get("decision_type") if decision else "No decision").upper()
-        conf_val = float(decision.get("confidence", 0.0)) if decision else 0.0
-        reason = decision.get("reason", "Awaiting analysis...") if decision else "No explanation yet."
+        # Defensive extraction and normalization
+        badge_text_raw = (decision.get("decision_type") if decision else "No decision")
+        badge_text = " ".join(str(badge_text_raw).split()).upper()
 
+        try:
+            conf_val = float(decision.get("confidence", 0.0)) if decision else 0.0
+        except Exception:
+            conf_val = 0.0
+
+        reason_raw = decision.get("reason", "Awaiting analysis...") if decision else "No explanation yet."
+        reason = " ".join(str(reason_raw).split())
+
+        # Decision summary badge (top-left)
         bx, by = 30, 18
         padding_x, padding_y = 12, 8
         tw, th = get_text_size(draw, badge_text, font_b)
@@ -361,9 +368,9 @@ class FacePanel:
 
         # icons list with titles and summaries (left of right panel)
         icons = [
-            ("health", "Heart Rate", f"HR: {int(decision.get('hr', 0)) if decision else '—'}"),
-            ("sleep", "Sleep", f"{decision.get('sleep_hours', '—')} hrs" if decision else "—"),
-            ("steps", "Steps", f"{decision.get('steps', '—')}" if decision else "—")
+            ("health", "Heart Rate", f"HR: {int(decision.get('hr', 0)) if decision and decision.get('hr') is not None else '—'}"),
+            ("sleep", "Sleep", f"{decision.get('sleep_hours', '—')} hrs" if decision and decision.get('sleep_hours') is not None else "—"),
+            ("steps", "Steps", f"{decision.get('steps', '—')}" if decision and decision.get('steps') is not None else "—")
         ]
         ix = left_w + 20
         iy = 120
@@ -391,6 +398,9 @@ class FacePanel:
         lines = FacePanel._wrap_text(draw, reason, font_s, max_w)
         y_text = rect2[1] + 36
         for ln in lines[:4]:
+            ln = ln.strip()
+            if not ln:
+                continue
             draw.text((rect2[0] + 12, y_text), ln, font=font_s, fill=(220, 238, 243, 230))
             ln_h = get_text_size(draw, ln, font_s)[1]
             y_text += ln_h + 6
@@ -405,7 +415,7 @@ class FacePanel:
             draw.text((hist_box[0] + 10, yy), "- No recent decisions", font=font_s, fill=(200, 220, 210, 200))
         else:
             for r in recent:
-                ts = r.get("created_at", "")[:16]
+                ts = (r.get("created_at", "") or "")[:16]
                 typ = r.get("decision_type", "—")
                 confs = f"{int(r.get('confidence', 0)*100)}%"
                 line = f"{ts} • {typ} • {confs}"
@@ -426,9 +436,7 @@ def submit_evaluation(payload: dict, token: Optional[str] = None) -> dict:
     """
     Submit evaluation to backend.
 
-    Minimal change to avoid 422 Unprocessable Entity:
-    - Place user_id as a query parameter (backend expects user_id path/query)
-    - Send only metrics in JSON body
+    To avoid 422 Unprocessable Entity, send user_id as query param and metrics as JSON body.
     """
     headers = {}
     if token:
@@ -437,7 +445,6 @@ def submit_evaluation(payload: dict, token: Optional[str] = None) -> dict:
     user_id = payload.get("user_id")
     body = {k: v for k, v in payload.items() if k != "user_id"}
 
-    # Build path with query param if user_id present
     path = f"decision/evaluate?user_id={user_id}" if user_id is not None else "decision/evaluate"
     ok, resp = BackendConnector.post(path, payload=body, headers=headers)
     if ok:
@@ -455,6 +462,129 @@ def poll_decision(decision_id: str, token: Optional[str] = None, timeout: int = 
             return resp
         time.sleep(1.5)
     return None
+
+# -------------------------
+# Dashboard
+# -------------------------
+import plotly.graph_objects as go
+import plotly.express as px
+
+class Dashboard:
+    @staticmethod
+    def render(hr_val, step_val):
+        display_score = st.session_state.get('current_score', 50.0)
+        fig_gauge = go.Figure(go.Indicator(
+            mode="gauge+number",
+            value=display_score,
+            number={'font': {'color': 'white', 'family': 'Orbitron'}},
+            gauge={'axis': {'range': [0, 100], 'tickcolor': "#00ff88"}, 'bar': {'color': "#00ff88"}}
+        ))
+        fig_gauge.update_layout(height=300, paper_bgcolor='rgba(0,0,0,0)', font={'color': "white"})
+        st.plotly_chart(fig_gauge, use_container_width=True)
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.markdown(f"<div class='luna-card'><h4>💓 Heart Rate</h4><p>{hr_val} BPM</p></div>", unsafe_allow_html=True)
+        with col2:
+            st.markdown(f"<div class='luna-card'><h4>👟 Steps</h4><p>{step_val} steps</p></div>", unsafe_allow_html=True)
+        with col3:
+            st.markdown(f"<div class='luna-card'><h4>⚡ Performance</h4><p>{display_score} %</p></div>", unsafe_allow_html=True)
+
+        hist_df = CoreBridge.fetch_recent()
+        if not hist_df.empty:
+            st.markdown("<h3 style='color:#00ff88;'>📈 Timeline</h3>", unsafe_allow_html=True)
+            fig_line = px.area(hist_df.iloc[::-1], x='timestamp', y='performance_score')
+            fig_line.update_traces(line_color='#00ff88', fillcolor='rgba(0,255,136,0.1)', line_width=3)
+            fig_line.update_layout(paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(0,0,0,0)', height=300, font={'color': "white"})
+            st.plotly_chart(fig_line, use_container_width=True)
+        else:
+            st.info("No data yet.")
+
+# -------------------------
+# ChartRenderer (matplotlib helper) - integrated after Dashboard
+# -------------------------
+import matplotlib
+matplotlib.use("Agg")
+import matplotlib.pyplot as plt
+from matplotlib.figure import Figure
+from PIL import Image as PILImage
+
+class ChartRenderer:
+    """
+    Utility to render charts as PNG bytes or PIL.Image.
+    """
+
+    @staticmethod
+    def fig_to_png_bytes(fig: Figure, dpi: int = 100) -> bytes:
+        buf = io.BytesIO()
+        fig.savefig(buf, format="png", bbox_inches="tight", dpi=dpi, transparent=True)
+        plt.close(fig)
+        buf.seek(0)
+        return buf.getvalue()
+
+    @staticmethod
+    def fig_to_pil(fig: Figure, dpi: int = 100) -> PILImage.Image:
+        png = ChartRenderer.fig_to_png_bytes(fig, dpi=dpi)
+        return PILImage.open(io.BytesIO(png)).convert("RGBA")
+
+    @staticmethod
+    def line_chart_from_series(x, y, title: str = None, xlabel: str = None, ylabel: str = None,
+                               color: str = "#00ff88", figsize=(6, 3)) -> bytes:
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.plot(x, y, color=color, linewidth=2)
+        ax.fill_between(x, y, alpha=0.08, color=color)
+        ax.set_facecolor("none")
+        fig.patch.set_alpha(0.0)
+        if title:
+            ax.set_title(title, color="white")
+        if xlabel:
+            ax.set_xlabel(xlabel, color="white")
+        if ylabel:
+            ax.set_ylabel(ylabel, color="white")
+        ax.tick_params(colors="white")
+        for spine in ax.spines.values():
+            spine.set_color("#2b2b2b")
+        plt.tight_layout()
+        return ChartRenderer.fig_to_png_bytes(fig)
+
+    @staticmethod
+    def area_chart_from_series(x, y, title: str = None, color: str = "#00ff88", figsize=(6, 3)) -> bytes:
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.plot(x, y, color=color, linewidth=1.5)
+        ax.fill_between(x, y, color=color, alpha=0.18)
+        ax.set_facecolor("none")
+        fig.patch.set_alpha(0.0)
+        if title:
+            ax.set_title(title, color="white")
+        ax.tick_params(colors="white")
+        for spine in ax.spines.values():
+            spine.set_color("#2b2b2b")
+        plt.tight_layout()
+        return ChartRenderer.fig_to_png_bytes(fig)
+
+    @staticmethod
+    def bar_chart(categories, values, title: str = None, color: str = "#00ff88", figsize=(6, 3)) -> bytes:
+        fig, ax = plt.subplots(figsize=figsize)
+        ax.bar(range(len(values)), values, color=color, alpha=0.9)
+        ax.set_xticks(range(len(values)))
+        ax.set_xticklabels([str(c) for c in categories], rotation=45, ha="right", color="white")
+        if title:
+            ax.set_title(title, color="white")
+        ax.tick_params(colors="white")
+        for spine in ax.spines.values():
+            spine.set_color("#2b2b2b")
+        plt.tight_layout()
+        return ChartRenderer.fig_to_png_bytes(fig)
+
+    @staticmethod
+    def sparkline(values, height: int = 40, color: str = "#00ff88") -> bytes:
+        fig, ax = plt.subplots(figsize=(len(values) * 0.06 + 0.5, height / 100))
+        ax.plot(values, color=color, linewidth=1.2)
+        ax.fill_between(range(len(values)), values, color=color, alpha=0.12)
+        ax.axis("off")
+        plt.margins(0)
+        plt.tight_layout(pad=0)
+        return ChartRenderer.fig_to_png_bytes(fig, dpi=150)
 
 # -------------------------
 # Streamlit App

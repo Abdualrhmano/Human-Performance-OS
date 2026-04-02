@@ -74,19 +74,31 @@ def get_text_size(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFon
     - fallback to textsize, font.getsize
     - final conservative estimate
     """
+    # Prefer textbbox (available in newer Pillow)
     try:
         bbox = draw.textbbox((0, 0), text, font=font)
         return bbox[2] - bbox[0], bbox[3] - bbox[1]
     except Exception:
         pass
+
+    # Some Pillow versions provide textsize on ImageDraw, but not all
     try:
-        return draw.textsize(text, font=font)
+        # Use getattr to avoid AttributeError in environments where textsize is missing
+        textsize_fn = getattr(draw, "textsize", None)
+        if callable(textsize_fn):
+            return textsize_fn(text, font=font)
     except Exception:
         pass
+
+    # Fallback to font.getsize if available
     try:
-        return font.getsize(text)
+        size = getattr(font, "getsize", None)
+        if callable(size):
+            return size(text)
     except Exception:
         pass
+
+    # Conservative estimate if nothing else works
     avg_char_w = max(6, int(getattr(font, "size", 16) * 0.5))
     return (len(text) * avg_char_w, int(avg_char_w * 1.6))
 
@@ -110,14 +122,12 @@ class BackendConnector:
         try:
             resp = requests.post(url, json=payload or {}, headers=hdrs, timeout=timeout)
             resp.raise_for_status()
-            # try to decode JSON safely
             try:
                 return True, resp.json()
             except Exception:
                 return True, {"raw_text": resp.text}
         except requests.HTTPError as he:
             LOG.exception("POST %s failed: %s", url, he)
-            # include status code and response text if available
             status_code = None
             text = None
             if he.response is not None:
@@ -416,19 +426,18 @@ def submit_evaluation(payload: dict, token: Optional[str] = None) -> dict:
     """
     Submit evaluation to backend.
 
-    Note: main backend endpoint expects `user_id` as a query parameter and the metrics
-    as JSON body. To avoid 422 Unprocessable Entity errors, we place user_id in the
-    query string and send only the metrics in the JSON body.
+    Minimal change to avoid 422 Unprocessable Entity:
+    - Place user_id as a query parameter (backend expects user_id path/query)
+    - Send only metrics in JSON body
     """
     headers = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
 
-    # Extract user_id for query param if present
     user_id = payload.get("user_id")
-    # Prepare body without user_id
     body = {k: v for k, v in payload.items() if k != "user_id"}
 
+    # Build path with query param if user_id present
     path = f"decision/evaluate?user_id={user_id}" if user_id is not None else "decision/evaluate"
     ok, resp = BackendConnector.post(path, payload=body, headers=headers)
     if ok:
@@ -487,7 +496,6 @@ def main():
             payload = {"user_id": user.get("id"), "hr": hr, "steps": steps, "screen_time": screen_time, "sleep_hours": sleep_hours}
             res = submit_evaluation(payload, token=st.session_state.auth.get("token"))
             if not res.get("ok"):
-                # show more details when available
                 err = res.get("error")
                 details = res.get("details")
                 if details and isinstance(details, dict):

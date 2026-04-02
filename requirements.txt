@@ -45,6 +45,7 @@ Pillow==10.0.0
 # Ensure websocket-client is compatible with jupyter-server
 websocket-client>=1.7.0
 watchdog==4.0.0
+matplotlib
 
 # --- BLE (optional) ---
 bleak==0.21.1

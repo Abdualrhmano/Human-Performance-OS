@@ -6,6 +6,14 @@ import time
 from datetime import datetime
 from typing import Dict, Any, Optional, List
 
+# Load .env early so os.getenv reads values if .env exists
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    # dotenv optional; if not installed, environment variables must be set externally
+    pass
+
 # Optional AI client import (Gemini)
 try:
     import google.generativeai as genai
@@ -30,17 +38,25 @@ class AIClient:
     Methods:
       - call(prompt, system_prompt=None) -> dict
     """
-    def __init__(self, api_key: str = GEMINI_KEY):
-        self.available = GENAI_AVAILABLE and bool(api_key)
-        if self.available:
-            try:
-                genai.configure(api_key=api_key)
-                LOG.info("AIClient: Gemini configured")
-            except Exception as e:
-                LOG.warning(f"AIClient: Gemini configure failed: {e}")
-                self.available = False
-        else:
-            LOG.info("AIClient: Gemini not available, using fallback")
+    def __init__(self, api_key: str = None):
+        # prefer explicit api_key param, otherwise read from environment (which may have been loaded above)
+        api_key = api_key if api_key is not None else os.getenv("GEMINI_KEY", "")
+        self.available = False
+        try:
+            if GENAI_AVAILABLE and api_key:
+                try:
+                    # configure genai; wrap in try/except to capture configuration errors
+                    genai.configure(api_key=api_key)
+                    self.available = True
+                    LOG.info("AIClient: Gemini configured and available")
+                except Exception as e:
+                    LOG.exception("AIClient: genai.configure failed: %s", e)
+                    self.available = False
+            else:
+                LOG.info("AIClient: Gemini not available (GENAI_AVAILABLE=%s, api_key_set=%s)", GENAI_AVAILABLE, bool(api_key))
+        except Exception as e:
+            LOG.exception("AIClient init unexpected error: %s", e)
+            self.available = False
 
     def call(self, prompt: str, system_prompt: Optional[str] = None, timeout: int = AI_TIMEOUT_SECONDS) -> Dict[str, Any]:
         """
@@ -48,16 +64,37 @@ class AIClient:
         """
         if self.available:
             try:
-                # Minimal safe call pattern; adapt to your genai client usage
-                response = genai.generate_text(prompt= (system_prompt or "") + "\n" + prompt)
-                text = getattr(response, "text", None) or str(response)
+                full_prompt = (system_prompt or "") + "\n" + prompt
+                # Try the modern signature with model and timeout; fallback to simpler call if signature differs
+                try:
+                    resp = genai.generate_text(model="models/text-bison-001", prompt=full_prompt, timeout=timeout)
+                except TypeError:
+                    # older/newer genai client may not accept model/timeout in this way
+                    resp = genai.generate_text(prompt=full_prompt)
+
+                # Extract text from possible response shapes
+                text = ""
+                try:
+                    if hasattr(resp, "text") and resp.text:
+                        text = resp.text
+                    elif hasattr(resp, "candidates") and resp.candidates:
+                        cand = resp.candidates[0]
+                        # candidate may have .content or .text depending on client version
+                        text = getattr(cand, "content", None) or getattr(cand, "text", None) or str(cand)
+                    else:
+                        # fallback to string representation
+                        text = str(resp)
+                except Exception as e:
+                    LOG.debug("AIClient: error extracting text from response: %s", e)
+                    text = str(resp)
+
                 # try parse JSON
                 try:
                     return json.loads(text)
                 except Exception:
                     return {"raw": text}
             except Exception as e:
-                LOG.warning(f"AIClient call failed: {e}")
+                LOG.exception("AIClient call failed: %s", e)
                 return {"error": "ai_call_failed", "message": str(e)}
         # Fallback deterministic stub
         return {"fallback": True, "raw": prompt[:512]}

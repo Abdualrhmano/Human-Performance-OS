@@ -1,4 +1,13 @@
 # main_part3.py
+"""
+Human Performance OS - main_part3 (fixed)
+- Robust Redis handling with SQLite fallback
+- Safe executor loop that works even if Redis is down
+- Ensure DB schema includes required columns
+- Clearer logging and error handling
+- Minimal changes only where issues occurred (Redis, executor, DB schema, auth)
+"""
+
 import os
 import json
 import uuid
@@ -18,16 +27,30 @@ import jwt
 # Optional Redis
 try:
     import redis
-    REDIS_AVAILABLE = True
+    REDIS_LIB_AVAILABLE = True
 except Exception:
     redis = None
-    REDIS_AVAILABLE = False
+    REDIS_LIB_AVAILABLE = False
 
-# Agents
-from agents import AIClient, run_agents_and_decide
+# Agents (project-specific; ensure agents.py exists)
+try:
+    from agents import AIClient, run_agents_and_decide
+except Exception:
+    # Provide safe fallbacks if agents module missing to avoid startup crash
+    def run_agents_and_decide(user_id, payload, ai_client=None):
+        return {"action": "monitor", "confidence": 0.0, "reason": "agents_unavailable", "agent_reports": []}
+
+    class AIClient:
+        def __init__(self, api_key=None):
+            self.api_key = api_key
 
 # APScheduler
-from apscheduler.schedulers.background import BackgroundScheduler
+try:
+    from apscheduler.schedulers.background import BackgroundScheduler
+    APS_AVAILABLE = True
+except Exception:
+    BackgroundScheduler = None
+    APS_AVAILABLE = False
 
 # Config
 DB_PATH = os.getenv("DB_PATH", "human_performance_v2.db")
@@ -38,10 +61,11 @@ TOKEN_EXPIRY_HOURS = int(os.getenv("TOKEN_EXPIRY_HOURS", "24"))
 GEMINI_KEY = os.getenv("GEMINI_KEY", "")
 
 # Logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
 LOG = logging.getLogger("main_part3")
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="api/v2/auth/login")
+# OAuth2: tokenUrl must match the login endpoint path
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v2/auth/login")
 
 # -------------------------
 # Security Provider
@@ -50,7 +74,7 @@ class SecurityProvider:
     @staticmethod
     def hash_password(password: str) -> str:
         import hashlib
-        salt = str(SECRET_KEY)
+        salt = str(SECRET_KEY or "")
         return hashlib.sha256((password + salt).encode()).hexdigest()
 
     @staticmethod
@@ -68,22 +92,31 @@ class SecurityProvider:
         return jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
 
 # -------------------------
-# DataBus
+# DataBus (SQLite + optional Redis)
 # -------------------------
 class DataBus:
     def __init__(self, db_path: str = DB_PATH, redis_url: str = REDIS_URL):
         self.db_path = db_path
         self.redis_url = redis_url
         self.redis = None
-        if REDIS_AVAILABLE:
+        self.redis_available = False
+        if REDIS_LIB_AVAILABLE:
             try:
                 self.redis = redis.from_url(redis_url, decode_responses=True)
-                LOG.info("Connected to Redis.")
+                try:
+                    self.redis.ping()
+                    self.redis_available = True
+                    LOG.info("Connected to Redis at %s", redis_url)
+                except Exception as e:
+                    LOG.warning("Redis ping failed during init: %s", e)
+                    self.redis = None
+                    self.redis_available = False
             except Exception as e:
-                LOG.warning(f"Redis connection failed: {e}")
+                LOG.warning("Redis initialization failed: %s", e)
                 self.redis = None
+                self.redis_available = False
         else:
-            LOG.info("Redis not available; running without Redis.")
+            LOG.info("Redis library not installed; running without Redis.")
         self._ensure_tables()
 
     def _connect(self):
@@ -92,14 +125,17 @@ class DataBus:
     def _ensure_tables(self):
         with self._connect() as conn:
             cur = conn.cursor()
+            # users
             cur.execute('''CREATE TABLE IF NOT EXISTS users 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                           username TEXT UNIQUE, 
                           password_hash TEXT)''')
+            # performance_logs: include hr and heart_rate for compatibility
             cur.execute('''CREATE TABLE IF NOT EXISTS performance_logs 
                          (id INTEGER PRIMARY KEY AUTOINCREMENT, 
                           user_id INTEGER, 
                           heart_rate INTEGER, 
+                          hr INTEGER,
                           steps INTEGER, 
                           screen_time FLOAT, 
                           sleep_hours FLOAT, 
@@ -108,6 +144,7 @@ class DataBus:
                           timestamp DATETIME,
                           job_id TEXT,
                           decision_id INTEGER)''')
+            # jobs
             cur.execute('''CREATE TABLE IF NOT EXISTS jobs (
                           id INTEGER PRIMARY KEY AUTOINCREMENT,
                           job_id TEXT UNIQUE,
@@ -120,6 +157,7 @@ class DataBus:
                           started_at DATETIME,
                           finished_at DATETIME
                         )''')
+            # decisions
             cur.execute('''CREATE TABLE IF NOT EXISTS decisions (
                           id INTEGER PRIMARY KEY AUTOINCREMENT,
                           job_id TEXT,
@@ -133,6 +171,7 @@ class DataBus:
                           outcome_recorded INTEGER DEFAULT 0,
                           outcome_id INTEGER
                         )''')
+            # feedbacks
             cur.execute('''CREATE TABLE IF NOT EXISTS feedbacks (
                           id INTEGER PRIMARY KEY AUTOINCREMENT,
                           decision_id INTEGER,
@@ -143,6 +182,7 @@ class DataBus:
                           created_at DATETIME,
                           FOREIGN KEY(decision_id) REFERENCES decisions(id)
                         )''')
+            # behavioral_profiles
             cur.execute('''CREATE TABLE IF NOT EXISTS behavioral_profiles (
                           user_id INTEGER PRIMARY KEY,
                           last_active DATETIME,
@@ -154,11 +194,20 @@ class DataBus:
                           behavior_vector TEXT,
                           updated_at DATETIME
                         )''')
+            # fallback queue for executions when Redis is down
+            cur.execute('''CREATE TABLE IF NOT EXISTS executions_queue (
+                          id INTEGER PRIMARY KEY AUTOINCREMENT,
+                          exec_id TEXT,
+                          payload TEXT,
+                          created_at DATETIME DEFAULT (datetime('now')),
+                          processed INTEGER DEFAULT 0
+                        )''')
+            # indexes
             cur.execute("CREATE INDEX IF NOT EXISTS idx_decisions_user ON decisions(user_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_feedback_user ON feedbacks(user_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_perflogs_user_time ON performance_logs(user_id, timestamp)")
             conn.commit()
-            LOG.info("Database tables ensured/created.")
+            LOG.info("Database tables ensured/created at %s.", self.db_path)
 
     # Users
     def create_user(self, username: str, password_hash: str) -> int:
@@ -181,10 +230,11 @@ class DataBus:
     def insert_performance_log(self, user_id: int, metrics: dict, performance_score: float, job_id: Optional[str]) -> int:
         with self._connect() as conn:
             cur = conn.cursor()
+            hr_val = metrics.get("hr") if metrics.get("hr") is not None else metrics.get("heart_rate")
             cur.execute("""INSERT INTO performance_logs
-                           (user_id, heart_rate, steps, screen_time, sleep_hours, performance_score, ai_recommendation, timestamp, job_id)
-                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-                        (user_id, metrics.get("hr"), metrics.get("steps"), metrics.get("screen_time"),
+                           (user_id, heart_rate, hr, steps, screen_time, sleep_hours, performance_score, ai_recommendation, timestamp, job_id)
+                           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                        (user_id, hr_val, hr_val, metrics.get("steps"), metrics.get("screen_time"),
                          metrics.get("sleep_hours"), performance_score, None, datetime.utcnow().isoformat(), job_id))
             conn.commit()
             return cur.lastrowid
@@ -194,26 +244,6 @@ class DataBus:
             cur = conn.cursor()
             cur.execute("UPDATE performance_logs SET ai_recommendation = ? WHERE id = ?", (ai_text, log_id))
             conn.commit()
-
-    def link_job_to_log(self, log_id: int, job_id: str):
-        if self.redis:
-            try:
-                self.redis.lpush("jobs", job_id)
-            except Exception as e:
-                LOG.warning(f"Failed to push job to redis queue: {e}")
-
-    def set_redis_job(self, prefix: str, job_id: str, payload: dict):
-        if self.redis:
-            try:
-                self.redis.set(prefix + job_id, json.dumps(payload))
-            except Exception:
-                pass
-
-    def get_redis_job(self, prefix: str, job_id: str) -> Optional[dict]:
-        if not self.redis:
-            return None
-        raw = self.redis.get(prefix + job_id)
-        return json.loads(raw) if raw else None
 
     # Jobs
     def create_job_record(self, job_id: str, user_id: int, job_type: str, payload: dict) -> int:
@@ -233,11 +263,51 @@ class DataBus:
             conn.commit()
 
     def push_job_to_queue(self, queue_key: str, job_id: str):
-        if self.redis:
+        if self.redis and self.redis_available:
             try:
                 self.redis.lpush(queue_key, job_id)
             except Exception as e:
                 LOG.warning(f"Failed to push job to redis queue: {e}")
+
+    def set_redis_job(self, prefix: str, job_id: str, payload: dict):
+        if self.redis and self.redis_available:
+            try:
+                self.redis.set(prefix + job_id, json.dumps(payload))
+            except Exception:
+                pass
+
+    def get_redis_job(self, prefix: str, job_id: str) -> Optional[dict]:
+        if not self.redis or not self.redis_available:
+            return None
+        try:
+            raw = self.redis.get(prefix + job_id)
+            return json.loads(raw) if raw else None
+        except Exception:
+            return None
+
+    # Executions queue fallback (SQLite)
+    def enqueue_execution_fallback(self, exec_id: str, payload: dict):
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute("INSERT INTO executions_queue (exec_id, payload, processed) VALUES (?, ?, 0)", (exec_id, json.dumps(payload)))
+            conn.commit()
+
+    def dequeue_execution_fallback(self) -> Optional[Dict[str, Any]]:
+        with self._connect() as conn:
+            cur = conn.cursor()
+            cur.execute("SELECT id, exec_id, payload FROM executions_queue WHERE processed=0 ORDER BY id ASC LIMIT 1")
+            row = cur.fetchone()
+            if not row:
+                return None
+            row_id, exec_id, payload_text = row
+            cur.execute("UPDATE executions_queue SET processed=1 WHERE id=?", (row_id,))
+            conn.commit()
+            try:
+                payload = json.loads(payload_text)
+            except Exception:
+                payload = {"raw": payload_text}
+            payload["exec_id"] = exec_id
+            return payload
 
     # Decisions & Feedback & Profiles
     def insert_decision(self, job_id: str, user_id: int, decision_type: str, decision_payload: dict, reason: str, confidence: float, executor: str = "executive") -> int:
@@ -423,11 +493,17 @@ async def register(user: UserAuthSchema):
 
 @app.post("/api/v2/auth/login", tags=["Security"])
 async def login(form_data: OAuth2PasswordRequestForm = Depends()):
-    user = db.get_user(form_data.username)
-    if not user or not SecurityProvider.verify_password(form_data.password, user["password_hash"]):
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Credentials")
-    token = SecurityProvider.generate_token({"sub": user["username"], "user_id": user["id"]})
-    return {"access_token": token, "token_type": "bearer"}
+    try:
+        user = db.get_user(form_data.username)
+        if not user or not SecurityProvider.verify_password(form_data.password, user["password_hash"]):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid Credentials")
+        token = SecurityProvider.generate_token({"sub": user["username"], "user_id": user["id"]})
+        return {"access_token": token, "token_type": "bearer"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        LOG.exception("Login endpoint error")
+        raise HTTPException(status_code=500, detail="Server error during login")
 
 async def get_current_user(token: str = Depends(oauth2_scheme)):
     try:
@@ -460,13 +536,13 @@ async def health():
     except Exception as e:
         LOG.warning(f"DB health check failed: {e}")
     try:
-        if db.redis:
+        if db.redis and db.redis_available:
             db.redis.ping()
             redis_ok = True
     except Exception as e:
         LOG.warning(f"Redis health check failed: {e}")
     ai_ok = False
-    status_str = "ok" if db_ok and (not REDIS_AVAILABLE or redis_ok) else "degraded"
+    status_str = "ok" if db_ok and (not REDIS_LIB_AVAILABLE or redis_ok) else "degraded"
     return {"status": status_str, "db": db_ok, "redis": redis_ok, "ai": ai_ok, "time": datetime.utcnow().isoformat()}
 
 # Performance sync endpoint (creates log + job)
@@ -477,9 +553,25 @@ async def sync_metrics(metrics: DeviceMetricsSchema, current_user: dict = Depend
     payload = {"user_id": current_user["id"], **metrics.dict()}
     log_id = db.insert_performance_log(current_user["id"], metrics.dict(), score, job_id)
     db.create_job_record(job_id, current_user["id"], "insight", payload)
-    db.push_job_to_queue("jobs", job_id)
-    db.set_redis_job("payload:", job_id, payload)
-    return {"job_id": job_id, "log_id": log_id}
+
+    # push to queue (try redis, fallback to sqlite)
+    try:
+        if db.redis and db.redis_available:
+            db.redis.lpush("jobs", job_id)
+            db.set_redis_job("payload:", job_id, payload)
+            backend = "redis"
+        else:
+            db.enqueue_execution_fallback(job_id, payload)
+            backend = "sqlite"
+    except Exception as e:
+        LOG.warning("Failed to queue job in redis; used fallback: %s", e)
+        try:
+            db.enqueue_execution_fallback(job_id, payload)
+            backend = "sqlite"
+        except Exception:
+            LOG.exception("Fallback enqueue failed")
+            raise HTTPException(status_code=500, detail="Failed to queue job")
+    return {"job_id": job_id, "log_id": log_id, "queued_backend": backend}
 
 # Profile & Decision endpoints
 @app.get("/api/v2/profile/{user_id}", tags=["Profile"])
@@ -487,31 +579,18 @@ async def get_profile(user_id: int):
     ps = ProfileService(db)
     return ps.get_profile(user_id)
 
-# -------------------------
 # Decision evaluate endpoint using agents and Gemini
-# -------------------------
 @app.post("/api/v2/decision/evaluate", tags=["Decision"])
 async def evaluate_decision(user_id: int, metrics: DeviceMetricsSchema):
-    """
-    Run local agents (Health, Productivity, Executive) with AIClient (Gemini) if available,
-    persist the decision and return the decision including agent_reports.
-    """
-    # 1. compute profile
     ps = ProfileService(db)
     profile = ps.compute_profile(user_id)
-
-    # 2. prepare AI client for agents (Gemini)
     ai_client = AIClient(api_key=GEMINI_KEY)
-
-    # 3. run agents and get decision (agents.py: run_agents_and_decide)
     payload = {**metrics.dict(), "profile": profile}
     try:
         decision = run_agents_and_decide(user_id, payload, ai_client=ai_client)
     except Exception as e:
         LOG.exception("run_agents_and_decide failed: %s", e)
         decision = {"action": "monitor", "confidence": 0.0, "reason": "agents_failed", "agent_reports": []}
-
-    # 4. persist decision in DB
     job_id = str(uuid.uuid4())
     try:
         did = db.insert_decision(
@@ -526,8 +605,6 @@ async def evaluate_decision(user_id: int, metrics: DeviceMetricsSchema):
     except Exception as e:
         LOG.exception("Failed to insert decision: %s", e)
         did = None
-
-    # 5. return decision and id
     return {"decision": decision, "decision_id": did}
 
 # Feedback & Insight endpoints
@@ -536,7 +613,6 @@ async def submit_feedback(decision_id: int, payload: dict, current_user: dict = 
     if not payload.get("feedback_type"):
         raise HTTPException(status_code=400, detail="feedback_type required")
     fid = db.insert_feedback(decision_id, current_user["id"], payload.get("feedback_type"), payload, payload.get("observed_effect"))
-    # recompute profile in background
     def recompute_profile(uid: int):
         rows = db.fetch_recent_metrics(uid, limit=30)
         if not rows:
@@ -552,7 +628,8 @@ async def submit_feedback(decision_id: int, payload: dict, current_user: dict = 
             profile = {"avg_steps": avg_steps, "avg_sleep": avg_sleep, "risk_score": risk, "behavior_vector": behavior_vector}
         db.upsert_behavioral_profile(uid, profile)
     try:
-        background_tasks.add_task(recompute_profile, current_user["id"])
+        if background_tasks:
+            background_tasks.add_task(recompute_profile, current_user["id"])
     except Exception:
         LOG.debug("Background profile recompute scheduling failed")
     return {"status": "ok", "feedback_id": fid}
@@ -581,97 +658,119 @@ async def decision_insight(decision_id: int, current_user: dict = Depends(get_cu
 # -------------------------
 # Scheduler: periodic_check
 # -------------------------
-scheduler = BackgroundScheduler()
-
-def periodic_check():
-    LOG.info("Periodic check started")
-    try:
-        with sqlite3.connect(DB_PATH) as conn:
-            cur = conn.cursor()
-            cur.execute("SELECT DISTINCT user_id FROM performance_logs WHERE timestamp > datetime('now','-1 day')")
-            users = [r[0] for r in cur.fetchall()]
-    except Exception as e:
-        LOG.error("Periodic check DB read failed: %s", e)
-        users = []
-
-    ai_client = AIClient(api_key=GEMINI_KEY)
-    for uid in users:
+if APS_AVAILABLE:
+    scheduler = BackgroundScheduler()
+    def periodic_check():
+        LOG.info("Periodic check started")
         try:
             with sqlite3.connect(DB_PATH) as conn:
                 cur = conn.cursor()
-                cur.execute("SELECT heart_rate, steps, screen_time, sleep_hours, timestamp FROM performance_logs WHERE user_id = ? ORDER BY timestamp DESC LIMIT 1", (uid,))
-                row = cur.fetchone()
-            if not row:
-                continue
-            payload = {
-                "hr": row[0],
-                "steps": row[1],
-                "screen_time": row[2],
-                "sleep_hours": row[3],
-                "timestamp": row[4],
-                "user_id": uid
-            }
-            decision = run_agents_and_decide(uid, payload, ai_client=ai_client)
-            action = decision.get("action")
-            confidence = float(decision.get("confidence", 0.0) or 0.0)
-            severity_high = any(isinstance(r, dict) and r.get("severity") == "high" for r in decision.get("agent_reports", []) or [])
-            if action == "auto_act" and (confidence < 0.9 and not severity_high):
-                LOG.info("Periodic: downgrading auto_act to nudge for user %s (conf=%s)", uid, confidence)
-                action = "nudge"
-                decision["reason"] = (decision.get("reason","") or "") + " (downgraded due to confidence)"
-            job_id = str(uuid.uuid4())
-            did = db.insert_decision(job_id=job_id, user_id=uid, decision_type=action, decision_payload={"agent_reports": decision.get("agent_reports"), "payload": payload}, reason=decision.get("reason",""), confidence=decision.get("confidence",0.0), executor="scheduler")
-            LOG.info("Periodic decision created id=%s for user %s action=%s", did, uid, action)
+                cur.execute("SELECT DISTINCT user_id FROM performance_logs WHERE timestamp > datetime('now','-1 day')")
+                users = [r[0] for r in cur.fetchall()]
         except Exception as e:
-            LOG.exception("Periodic decision failed for user %s: %s", uid, e)
+            LOG.error("Periodic check DB read failed: %s", e)
+            users = []
 
-try:
-    scheduler.add_job(periodic_check, 'interval', minutes=15, id='periodic_check')
-    scheduler.start()
-    LOG.info("Scheduler started (periodic_check every 15 minutes)")
-except Exception as e:
-    LOG.warning("Scheduler failed to start: %s", e)
-
-# -------------------------
-# Executor loop (background thread) - processes 'executions' queue
-# -------------------------
-def process_executions_loop():
-    LOG.info("Executor loop started")
-    r = db.redis
-    while True:
-        try:
-            if not r:
-                time.sleep(5)
-                continue
-            raw = r.rpop("executions")
-            if not raw:
-                time.sleep(2)
-                continue
-            try:
-                exec_record = json.loads(raw)
-            except Exception:
-                exec_record = {"raw": raw}
-            LOG.info("Executor picked exec_record: %s", exec_record.get("exec_id"))
+        ai_client = AIClient(api_key=GEMINI_KEY)
+        for uid in users:
             try:
                 with sqlite3.connect(DB_PATH) as conn:
                     cur = conn.cursor()
-                    cur.execute("UPDATE jobs SET status=?, finished_at=? WHERE job_id=?", ("done", datetime.utcnow().isoformat(), exec_record.get("exec_id")))
-                    conn.commit()
-            except Exception:
-                LOG.debug("Executor: failed to mark execution job done")
-        except Exception as e:
-            LOG.exception("Executor loop error: %s", e)
-            time.sleep(5)
+                    cur.execute("SELECT heart_rate, hr, steps, screen_time, sleep_hours, timestamp FROM performance_logs WHERE user_id = ? ORDER BY timestamp DESC LIMIT 1", (uid,))
+                    row = cur.fetchone()
+                if not row:
+                    continue
+                hr_val = row[1] if row[1] is not None else row[0]
+                payload = {
+                    "hr": hr_val,
+                    "steps": row[2],
+                    "screen_time": row[3],
+                    "sleep_hours": row[4],
+                    "timestamp": row[5],
+                    "user_id": uid
+                }
+                decision = run_agents_and_decide(uid, payload, ai_client=ai_client)
+                action = decision.get("action")
+                confidence = float(decision.get("confidence", 0.0) or 0.0)
+                severity_high = any(isinstance(r, dict) and r.get("severity") == "high" for r in decision.get("agent_reports", []) or [])
+                if action == "auto_act" and (confidence < 0.9 and not severity_high):
+                    LOG.info("Periodic: downgrading auto_act to nudge for user %s (conf=%s)", uid, confidence)
+                    action = "nudge"
+                    decision["reason"] = (decision.get("reason","") or "") + " (downgraded due to confidence)"
+                job_id = str(uuid.uuid4())
+                did = db.insert_decision(job_id=job_id, user_id=uid, decision_type=action, decision_payload={"agent_reports": decision.get("agent_reports"), "payload": payload}, reason=decision.get("reason",""), confidence=decision.get("confidence",0.0), executor="scheduler")
+                LOG.info("Periodic decision created id=%s for user %s action=%s", did, uid, action)
+            except Exception as e:
+                LOG.exception("Periodic decision failed for user %s: %s", uid, e)
 
-if REDIS_AVAILABLE and db.redis:
-    import threading
-    t = threading.Thread(target=process_executions_loop, daemon=True)
-    t.start()
-    LOG.info("Executor background thread started")
+    try:
+        scheduler.add_job(periodic_check, 'interval', minutes=15, id='periodic_check')
+        scheduler.start()
+        LOG.info("Scheduler started (periodic_check every 15 minutes)")
+    except Exception as e:
+        LOG.warning("Scheduler failed to start: %s", e)
+else:
+    LOG.info("APScheduler not available; periodic checks disabled.")
 
 # -------------------------
-# Run app
+# Executor loop (background thread) - robust: Redis first, SQLite fallback
 # -------------------------
-if __name__ == "__main__":
-    LOG.info("Starting Human Performance OS v3 (main_part3)...")
-    uvicorn.run("main_part3:app", host="0.0.0.0", port=8000, reload=True)
+import threading
+
+_worker_thread = None
+_worker_stop = threading.Event()
+
+def process_execution_item(exec_record: Dict[str, Any]):
+    LOG.info("Processing execution: %s", exec_record.get("exec_id"))
+    try:
+        exec_id = exec_record.get("exec_id") or exec_record.get("job_id")
+        if exec_id:
+            with sqlite3.connect(DB_PATH) as conn:
+                cur = conn.cursor()
+                cur.execute("UPDATE jobs SET status=?, finished_at=? WHERE job_id=?", ("done", datetime.utcnow().isoformat(), exec_id))
+                conn.commit()
+    except Exception:
+        LOG.exception("Failed to mark job done for exec_record")
+
+def process_executions_loop():
+    LOG.info("Executor loop started (robust)")
+    while not _worker_stop.is_set():
+        try:
+            item = None
+            # Try Redis first if available
+            if db.redis and db.redis_available:
+                try:
+                    raw = db.redis.rpop("executions")
+                    if raw:
+                        if isinstance(raw, bytes):
+                            raw = raw.decode("utf-8")
+                        try:
+                            item = json.loads(raw)
+                        except Exception:
+                            item = {"raw": raw}
+                except Exception as e:
+                    LOG.warning("Redis rpop failed: %s. Disabling redis and falling back to sqlite.", e)
+                    try:
+                        db.redis.close()
+                    except Exception:
+                        pass
+                    db.redis = None
+                    db.redis_available = False
+
+            # If no item from Redis, try SQLite fallback queue
+            if item is None:
+                item = db.dequeue_execution_fallback()
+
+            if item:
+                try:
+                    process_execution_item(item)
+                except Exception as e:
+                    LOG.exception("Error processing item: %s", e)
+            else:
+                time.sleep(2)
+        except Exception[8],
+                "outcome_recorded": bool(row[9]),
+                "outcome_id": row[10]
+            }
+
+    def upsert

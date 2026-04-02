@@ -768,9 +768,69 @@ def process_executions_loop():
                     LOG.exception("Error processing item: %s", e)
             else:
                 time.sleep(2)
-        except Exception[8],
-                "outcome_recorded": bool(row[9]),
-                "outcome_id": row[10]
-            }
+        except Exception as e:
+            LOG.exception("Executor loop unexpected error: %s", e)
+            time.sleep(5)
+    LOG.info("Executor loop stopped.")
 
-    def upsert
+def start_executor_background_thread():
+    global _worker_thread
+    if _worker_thread and _worker_thread.is_alive():
+        LOG.info("Executor already running")
+        return
+    _worker_stop.clear()
+    _worker_thread = threading.Thread(target=process_executions_loop, daemon=True)
+    _worker_thread.start()
+    LOG.info("Executor background thread started")
+
+def stop_executor_background_thread():
+    _worker_stop.set()
+    if _worker_thread:
+        _worker_thread.join(timeout=3.0)
+    LOG.info("Executor background thread stopped")
+
+# Start executor thread always (it will use fallback if Redis not available)
+start_executor_background_thread()
+
+# -------------------------
+# App startup/shutdown events
+# -------------------------
+@app.on_event("startup")
+def on_startup():
+    # ensure tables exist
+    db._ensure_tables()
+    # re-check redis availability
+    if REDIS_LIB_AVAILABLE and db.redis:
+        try:
+            db.redis.ping()
+            db.redis_available = True
+        except Exception:
+            db.redis_available = False
+    LOG.info("App startup complete. Redis available=%s", getattr(db, "redis_available", False))
+
+@app.on_event("shutdown")
+def on_shutdown():
+    stop_executor_background_thread()
+    try:
+        if db.redis:
+            db.redis.close()
+    except Exception:
+        pass
+    if APS_AVAILABLE:
+        try:
+            scheduler.shutdown(wait=False)
+        except Exception:
+            pass
+    LOG.info("App shutdown complete.")
+
+# -------------------------
+# Run app
+# -------------------------
+if __name__ == "__main__":
+    LOG.info("Starting Human Performance OS v3 (main_part3)...")
+    db._ensure_tables()
+    if REDIS_LIB_AVAILABLE and db.redis and db.redis_available:
+        LOG.info("Redis is available and will be used for queues.")
+    else:
+        LOG.info("Redis not available; using SQLite fallback for queues.")
+    uvicorn.run("main_part3:app", host="0.0.0.0", port=8000, reload=True)

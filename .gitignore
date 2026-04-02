@@ -1,0 +1,65 @@
+# Python bytecode and caches
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environment
+.venv/
+venv/
+ENV/
+env/
+
+# Environment files and secrets
+.env
+.env.* 
+.env.local
+
+# Logs
+logs/
+*.log
+nohup.out
+
+# SQLite DB (local dev)
+*.db
+*.sqlite
+human_performance_v2.db
+
+# Pip / build artifacts
+pip-wheel-metadata/
+*.egg-info/
+dist/
+build/
+
+# IDE / Editor
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Test / coverage
+.coverage
+htmlcov/
+.pytest_cache/
+
+# Node / frontend artifacts (if any)
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Streamlit cache
+.streamlit/
+
+# Docker
+docker-compose.override.yml
+.env.docker
+
+# Misc
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx

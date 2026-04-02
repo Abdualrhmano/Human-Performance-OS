@@ -43,7 +43,7 @@ source "$VENV_DIR/bin/activate"
 python -m pip install --upgrade pip setuptools wheel >/dev/null
 
 # تثبيت الحزم الأساسية إن لم تكن مثبتة (خفيفة)
-REQUIREMENTS="${REQUIREMENTS:-requirements-lite.txt}"
+REQUIREMENTS="${REQUIREMENTS:-requirements.txt}"
 if [ -f "$REQUIREMENTS" ]; then
   echo "Installing requirements from $REQUIREMENTS (this may take a moment)..."
   pip install -r "$REQUIREMENTS"

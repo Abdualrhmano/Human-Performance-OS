@@ -52,7 +52,7 @@ bleak==0.21.1
 # --- DB Drivers / Production ---
 psycopg2-binary==2.9.10
 gunicorn==20.1.0
-
+fakeredis
 # --- Monitoring / Observability ---
 prometheus-client==0.17.0
 sentry-sdk==1.24.0

@@ -87,7 +87,7 @@ def get_text_size(draw: ImageDraw.ImageDraw, text: str, font: ImageFont.ImageFon
         return font.getsize(text)
     except Exception:
         pass
-    avg_char_w = max(6, int(font.size * 0.5)) if hasattr(font, "size") else 8
+    avg_char_w = max(6, int(getattr(font, "size", 16) * 0.5))
     return (len(text) * avg_char_w, int(avg_char_w * 1.6))
 
 # -------------------------
@@ -110,10 +110,26 @@ class BackendConnector:
         try:
             resp = requests.post(url, json=payload or {}, headers=hdrs, timeout=timeout)
             resp.raise_for_status()
-            return True, resp.json()
+            # try to decode JSON safely
+            try:
+                return True, resp.json()
+            except Exception:
+                return True, {"raw_text": resp.text}
+        except requests.HTTPError as he:
+            LOG.exception("POST %s failed: %s", url, he)
+            # include status code and response text if available
+            status_code = None
+            text = None
+            if he.response is not None:
+                status_code = he.response.status_code
+                try:
+                    text = he.response.json()
+                except Exception:
+                    text = he.response.text
+            return False, {"error": str(he), "status_code": status_code, "response": text}
         except Exception as e:
             LOG.exception("POST %s failed: %s", url, e)
-            return False, {"error": str(e), "status_code": getattr(e, "response", None) and getattr(e.response, "status_code", None)}
+            return False, {"error": str(e)}
 
     @staticmethod
     def get(path: str, params: dict = None, headers: dict = None, timeout: int = 10) -> Tuple[bool, dict]:
@@ -124,7 +140,10 @@ class BackendConnector:
         try:
             resp = requests.get(url, params=params or {}, headers=hdrs, timeout=timeout)
             resp.raise_for_status()
-            return True, resp.json()
+            try:
+                return True, resp.json()
+            except Exception:
+                return True, {"raw_text": resp.text}
         except Exception as e:
             LOG.exception("GET %s failed: %s", url, e)
             return False, {"error": str(e)}
@@ -394,13 +413,27 @@ class FacePanel:
 # UI Components & Flow
 # -------------------------
 def submit_evaluation(payload: dict, token: Optional[str] = None) -> dict:
+    """
+    Submit evaluation to backend.
+
+    Note: main backend endpoint expects `user_id` as a query parameter and the metrics
+    as JSON body. To avoid 422 Unprocessable Entity errors, we place user_id in the
+    query string and send only the metrics in the JSON body.
+    """
     headers = {}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    ok, resp = BackendConnector.post("decision/evaluate", payload=payload, headers=headers)
+
+    # Extract user_id for query param if present
+    user_id = payload.get("user_id")
+    # Prepare body without user_id
+    body = {k: v for k, v in payload.items() if k != "user_id"}
+
+    path = f"decision/evaluate?user_id={user_id}" if user_id is not None else "decision/evaluate"
+    ok, resp = BackendConnector.post(path, payload=body, headers=headers)
     if ok:
         return {"ok": True, "response": resp}
-    return {"ok": False, "error": resp.get("error", "unknown")}
+    return {"ok": False, "error": resp.get("error", "unknown"), "details": resp}
 
 def poll_decision(decision_id: str, token: Optional[str] = None, timeout: int = 30) -> Optional[dict]:
     headers = {}
@@ -454,7 +487,14 @@ def main():
             payload = {"user_id": user.get("id"), "hr": hr, "steps": steps, "screen_time": screen_time, "sleep_hours": sleep_hours}
             res = submit_evaluation(payload, token=st.session_state.auth.get("token"))
             if not res.get("ok"):
-                st.error(f"Submit failed: {res.get('error')}")
+                # show more details when available
+                err = res.get("error")
+                details = res.get("details")
+                if details and isinstance(details, dict):
+                    st.error(f"Submit failed: {err} (status: {details.get('status_code')})")
+                    LOG.debug("Submit details: %s", details)
+                else:
+                    st.error(f"Submit failed: {err}")
             else:
                 resp = res.get("response")
                 decision = resp.get("decision") or resp
